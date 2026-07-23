@@ -46,13 +46,15 @@ _PATTERNS = {
 
 def classify_folder(
     node: FolderNode,
+    compiled_patterns: dict[str, list[re.Pattern]] | None = None,
     custom_patterns: list[str] | None = None,
 ) -> tuple[str, str, str]:
     # CLASSIFIES A FOLDER AND RETURNS (CLASSIFICATION, RECOMMENDED_ACTION, REASON).
     # CHECKS THE FOLDER NAME AGAINST ALL WELL-KNOWN PATTERNS.
     folder_name = node.name
-    combined_patterns = _compile_all_patterns(custom_patterns)
-    for category, pattern_list in combined_patterns.items():
+    if compiled_patterns is None:
+        compiled_patterns = _compile_all_patterns(custom_patterns)
+    for category, pattern_list in compiled_patterns.items():
         for pattern in pattern_list:
             if pattern.search(folder_name):
                 action, reason = _action_for_category(category, node)
@@ -101,18 +103,19 @@ def classify_tree(
     custom_patterns: list[str] | None = None,
 ) -> list[dict]:
     # WALKS THE ENTIRE TREE AND CLASSIFIES EVERY FOLDER, RETURNING A LIST OF CLASSIFICATION DICTS.
+    compiled = _compile_all_patterns(custom_patterns)
     classifications = []
-    _classify_recursive(root, custom_patterns, classifications)
+    _classify_recursive(root, compiled, classifications)
     return classifications
 
 
 def _classify_recursive(
     node: FolderNode,
-    custom_patterns: list[str] | None,
+    compiled_patterns: dict[str, list[re.Pattern]],
     accumulator: list[dict],
 ) -> None:
     # CLASSIFIES THE CURRENT NODE AND RECURSIVELY PROCESSES ALL CHILDREN.
-    classification, action, reason = classify_folder(node, custom_patterns)
+    classification, action, reason = classify_folder(node, compiled_patterns)
     node.classification = classification
     node.recommended_action = action
     accumulator.append({
@@ -123,4 +126,4 @@ def _classify_recursive(
         "user_override": None,
     })
     for child in node.children:
-        _classify_recursive(child, custom_patterns, accumulator)
+        _classify_recursive(child, compiled_patterns, accumulator)

@@ -35,6 +35,19 @@ class AuditStore:
                 audit_record.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
             session.commit()
 
+    def record_files_batch(self, records: list[tuple[str, int, str | None, str]]) -> None:
+        # BULK INSERTS OR UPDATES MULTIPLE FILE RECORDS IN A SINGLE SESSION FOR PERFORMANCE.
+        with self.session_factory() as session:
+            for file_path, file_size, file_hash, file_status in records:
+                audit_record = session.scalar(select(FileAudit).where(FileAudit.path == file_path))
+                if audit_record is None:
+                    audit_record = FileAudit(path=file_path, size=file_size, sha256=file_hash, status=file_status)
+                    session.add(audit_record)
+                else:
+                    audit_record.size, audit_record.sha256, audit_record.status = file_size, file_hash, file_status
+                    audit_record.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+            session.commit()
+
     def reserve_title(self, proposed_title: str, source_file_path: str) -> str:
         with self.session_factory() as session:
             existing_source_title = session.scalar(

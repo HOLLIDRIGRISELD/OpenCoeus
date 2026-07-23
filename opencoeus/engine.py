@@ -94,9 +94,11 @@ class ScanEngine:
         for file_record in discovered_files:
             files_grouped_by_size[file_record.size].append(file_record)
         first_file_by_hash: dict[str, Path] = {}
+        batch_records: list[tuple[str, int, str | None, str]] = []
+        total_files = len(discovered_files)
         for file_number, file_record in enumerate(discovered_files, 1):
-            if progress_callback:
-                progress_callback(f"{file_number}/{len(discovered_files)}  {file_record.path}")
+            if progress_callback and (file_number % 50 == 0 or file_number == total_files):
+                progress_callback(f"{file_number}/{total_files}  {file_record.path}")
             relative_file_path = file_record.path.relative_to(self.settings.root)
             is_protected_file = is_protected(relative_file_path, self.settings.protected_patterns)
             file_hash = ""
@@ -115,7 +117,7 @@ class ScanEngine:
             if use_extraction and file_status in {"unique", "protected"} and file_record.path.suffix.lower() in {".pdf", ".docx"}:
                 suggested_title = suggest_title(extract_text(file_record.path), file_record.path.stem)
                 suggested_title = self.store.reserve_title(suggested_title, str(file_record.path))
-            self.store.record_file(str(file_record.path), file_record.size, file_hash or None, file_status)
+            batch_records.append((str(file_record.path), file_record.size, file_hash or None, file_status))
             scan_result.rows.append(ManifestRow(
                 path=str(file_record.path),
                 size=file_record.size,
@@ -128,6 +130,7 @@ class ScanEngine:
                 modified_at=file_record.modified_at.isoformat() if file_record.modified_at else "",
                 folder_path=file_record.folder_path,
             ))
+        self.store.record_files_batch(batch_records)
 
     def _is_in_excluded_folder(self, file_record: FileRecord, excluded_folders: set[str]) -> bool:
         # CHECKS WHETHER A FILE'S FOLDER PATH MATCHES ANY EXCLUDED FOLDER.

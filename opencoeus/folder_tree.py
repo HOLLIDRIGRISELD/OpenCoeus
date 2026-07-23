@@ -36,7 +36,7 @@ def build_folder_tree(
         is_protected=is_protected(root_path, protected_patterns),
     )
     _populate_children(root_node, protected_patterns, max_depth, progress_callback)
-    _compute_aggregates(root_node)
+    _compute_local_stats(root_node)
     return root_node
 
 
@@ -45,10 +45,13 @@ def _populate_children(
     protected_patterns: list[str],
     max_depth: int,
     progress_callback,
+    _folder_counter: list[int] | None = None,
 ) -> None:
     # RECURSIVELY DISCOVERS SUBDIRECTORIES AND POPULATES CHILD NODES.
     if parent_node.depth >= max_depth:
         return
+    if _folder_counter is None:
+        _folder_counter = [0]
     try:
         sorted_entries = sorted(parent_node.path.iterdir(), key=lambda entry: entry.name.lower())
     except PermissionError:
@@ -65,22 +68,26 @@ def _populate_children(
             is_protected=is_protected(entry, protected_patterns),
         )
         parent_node.children.append(child_node)
-        if progress_callback:
+        _folder_counter[0] += 1
+        if progress_callback and _folder_counter[0] % 5 == 0:
             progress_callback(child_node.path)
-        _populate_children(child_node, protected_patterns, max_depth, progress_callback)
+        _populate_children(child_node, protected_patterns, max_depth, progress_callback, _folder_counter)
 
 
-def _compute_aggregates(node: FolderNode) -> None:
-    # BOTTOM-UP CALCULATION OF FILE COUNTS AND TOTAL SIZES FOR EVERY NODE.
+def _compute_local_stats(node: FolderNode) -> None:
+    # COMPUTES DIRECT FILE COUNT AND SIZE FOR EACH NODE, THEN RECURSIVELY AGGREGATES UP.
     try:
-        direct_files = [f for f in node.path.iterdir() if f.is_file() and not f.is_symlink()]
-        node.file_count = len(direct_files)
-        node.total_size = sum(f.stat().st_size for f in direct_files)
+        for entry in node.path.iterdir():
+            if entry.is_file() and not entry.is_symlink():
+                node.file_count += 1
+                try:
+                    node.total_size += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    pass
     except PermissionError:
-        node.file_count = 0
-        node.total_size = 0
+        pass
     for child in node.children:
-        _compute_aggregates(child)
+        _compute_local_stats(child)
         node.file_count += child.file_count
         node.total_size += child.total_size
 
@@ -90,6 +97,19 @@ def flatten_tree(root: FolderNode) -> list[dict]:
     flat_list = []
     _flatten_recursive(root, flat_list)
     return flat_list
+
+
+def build_node_index(root: FolderNode) -> dict[str, FolderNode]:
+    # BUILDS A PATH-STRING TO FOLDERNODE DICTIONARY FOR O(1) LOOKUPS.
+    index: dict[str, FolderNode] = {}
+    _index_recursive(root, index)
+    return index
+
+
+def _index_recursive(node: FolderNode, index: dict[str, FolderNode]) -> None:
+    index[node.path.as_posix()] = node
+    for child in node.children:
+        _index_recursive(child, index)
 
 
 def _flatten_recursive(node: FolderNode, accumulator: list[dict]) -> None:
@@ -121,9 +141,13 @@ def find_node(root: FolderNode, target_path: Path) -> FolderNode | None:
     return None
 
 
-def set_folder_exclusion(root: FolderNode, target_path: Path, excluded: bool) -> bool:
+def set_folder_exclusion(root: FolderNode, target_path: Path, excluded: bool,
+                         node_index: dict[str, FolderNode] | None = None) -> bool:
     # TOGGLES THE EXCLUDED FLAG ON A SPECIFIC FOLDER AND RETURNS WHETHER IT WAS FOUND.
-    node = find_node(root, target_path)
+    if node_index is not None:
+        node = node_index.get(target_path.as_posix())
+    else:
+        node = find_node(root, target_path)
     if node is None:
         return False
     node.excluded = excluded

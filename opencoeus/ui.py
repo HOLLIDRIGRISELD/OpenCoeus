@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, QTimer, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from .config import ScanSettings
 from .database import AuditStore
 from .engine import ScanEngine, ScanResult, write_manifest
-from .folder_tree import FolderNode, build_folder_tree, set_folder_exclusion
+from .folder_tree import FolderNode, build_folder_tree, build_node_index, set_folder_exclusion
 from .profiles import (
     ProfileConfig, create_profile, delete_profile, list_profiles,
     load_profile_by_name, update_profile,
@@ -349,11 +349,16 @@ class MainWindow(QMainWindow):
         self.current_profile: ProfileConfig | None = None
         self.active_rules: list[dict] = list(DEFAULT_RULES)
         self.proposed_matches: list[RuleMatch] = []
+        self._node_index: dict[str, FolderNode] = {}
         self.store = AuditStore()
         self.phase_one_worker: PhaseOneWorker | None = None
         self.phase_two_worker: PhaseTwoWorker | None = None
         self._nav_buttons: list[SidebarButton] = []
         self._pages: list[QWidget] = []
+        self._log_buffer: list[str] = []
+        self._log_timer = QTimer(self)
+        self._log_timer.timeout.connect(self._flush_log)
+        self._log_timer.setInterval(100)
 
         self._build_ui()
         self._apply_global_style()
@@ -862,7 +867,15 @@ class MainWindow(QMainWindow):
         self._switch_page(1)
 
     def _on_log_message(self, msg: str) -> None:
-        self.audit_log.append(msg)
+        self._log_buffer.append(msg)
+        if not self._log_timer.isActive():
+            self._log_timer.start()
+
+    def _flush_log(self) -> None:
+        if self._log_buffer:
+            self.audit_log.append("\n".join(self._log_buffer))
+            self._log_buffer.clear()
+        self._log_timer.stop()
 
     # ------------------------------------------------------------------ #
     #  PHASE TWO                                                           #
@@ -1031,15 +1044,20 @@ class MainWindow(QMainWindow):
     def _fill_folder_tree(self, root: FolderNode) -> None:
         self.folder_tree.clear()
         self.folder_tree.blockSignals(True)
-        root_item = QTreeWidgetItem(self.folder_tree, [
-            root.name, str(root.file_count), self._fmt(root.total_size), "",
-        ])
-        root_item.setFlags(root_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        root_item.setCheckState(0, Qt.CheckState.Checked)
-        root_item.setData(0, Qt.ItemDataRole.UserRole, root.path.as_posix())
-        self._add_tree_children(root, root_item)
-        self.folder_tree.expandToDepth(1)
-        self.folder_tree.blockSignals(False)
+        self.folder_tree.setUpdatesEnabled(False)
+        try:
+            root_item = QTreeWidgetItem(self.folder_tree, [
+                root.name, str(root.file_count), self._fmt(root.total_size), "",
+            ])
+            root_item.setFlags(root_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            root_item.setCheckState(0, Qt.CheckState.Checked)
+            root_item.setData(0, Qt.ItemDataRole.UserRole, root.path.as_posix())
+            self._add_tree_children(root, root_item)
+            self.folder_tree.expandToDepth(1)
+        finally:
+            self.folder_tree.setUpdatesEnabled(True)
+            self.folder_tree.blockSignals(False)
+        self._node_index = build_node_index(root)
 
     def _add_tree_children(self, node: FolderNode, parent: QTreeWidgetItem) -> None:
         for child in node.children:
@@ -1069,11 +1087,11 @@ class MainWindow(QMainWindow):
         self.folder_tree.blockSignals(True)
         if checked:
             self.excluded_folders.discard(path_str)
-            set_folder_exclusion(self.folder_tree_root, Path(path_str), excluded=False)
+            set_folder_exclusion(self.folder_tree_root, Path(path_str), excluded=False, node_index=self._node_index)
             self._set_children_check_state(item, Qt.CheckState.Checked)
         else:
             self.excluded_folders.add(path_str)
-            set_folder_exclusion(self.folder_tree_root, Path(path_str), excluded=True)
+            set_folder_exclusion(self.folder_tree_root, Path(path_str), excluded=True, node_index=self._node_index)
             self._set_children_check_state(item, Qt.CheckState.Unchecked)
         self._update_parent_check_state(item)
         self.folder_tree.blockSignals(False)
@@ -1086,10 +1104,10 @@ class MainWindow(QMainWindow):
             if child_path:
                 if state == Qt.CheckState.Unchecked:
                     self.excluded_folders.add(child_path)
-                    set_folder_exclusion(self.folder_tree_root, Path(child_path), excluded=True)
+                    set_folder_exclusion(self.folder_tree_root, Path(child_path), excluded=True, node_index=self._node_index)
                 else:
                     self.excluded_folders.discard(child_path)
-                    set_folder_exclusion(self.folder_tree_root, Path(child_path), excluded=False)
+                    set_folder_exclusion(self.folder_tree_root, Path(child_path), excluded=False, node_index=self._node_index)
             self._set_children_check_state(child, state)
 
     def _update_parent_check_state(self, item: QTreeWidgetItem) -> None:
@@ -1114,46 +1132,58 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _fill_results_table(self, result: ScanResult) -> None:
         t = self.results_table
-        t.setRowCount(len(result.rows))
-        for i, r in enumerate(result.rows):
-            path_item = QTableWidgetItem(self._truncate_path(r.path))
-            path_item.setToolTip(r.path)
-            t.setItem(i, 0, path_item)
-            t.setItem(i, 1, QTableWidgetItem(self._fmt(r.size)))
-            status = QTableWidgetItem(r.status.upper())
-            color_map = {
-                "duplicate": COLORS["red"],
-                "protected": COLORS["yellow"],
-                "unique": COLORS["green"],
-            }
-            if r.status in color_map:
-                status.setForeground(QColor(color_map[r.status]))
-            t.setItem(i, 2, status)
-            dup_item = QTableWidgetItem(self._truncate_path(r.duplicate_of) if r.duplicate_of else "")
-            if r.duplicate_of:
-                dup_item.setToolTip(r.duplicate_of)
-            t.setItem(i, 3, dup_item)
-            t.setItem(i, 4, QTableWidgetItem(r.suggested_title))
-            t.setItem(i, 5, QTableWidgetItem(r.extension))
-            folder_item = QTableWidgetItem(self._truncate_path(r.folder_path))
-            folder_item.setToolTip(r.folder_path)
-            t.setItem(i, 6, folder_item)
+        t.setUpdatesEnabled(False)
+        t.blockSignals(True)
+        try:
+            t.setRowCount(len(result.rows))
+            for i, r in enumerate(result.rows):
+                path_item = QTableWidgetItem(self._truncate_path(r.path))
+                path_item.setToolTip(r.path)
+                t.setItem(i, 0, path_item)
+                t.setItem(i, 1, QTableWidgetItem(self._fmt(r.size)))
+                status = QTableWidgetItem(r.status.upper())
+                color_map = {
+                    "duplicate": COLORS["red"],
+                    "protected": COLORS["yellow"],
+                    "unique": COLORS["green"],
+                }
+                if r.status in color_map:
+                    status.setForeground(QColor(color_map[r.status]))
+                t.setItem(i, 2, status)
+                dup_item = QTableWidgetItem(self._truncate_path(r.duplicate_of) if r.duplicate_of else "")
+                if r.duplicate_of:
+                    dup_item.setToolTip(r.duplicate_of)
+                t.setItem(i, 3, dup_item)
+                t.setItem(i, 4, QTableWidgetItem(r.suggested_title))
+                t.setItem(i, 5, QTableWidgetItem(r.extension))
+                folder_item = QTableWidgetItem(self._truncate_path(r.folder_path))
+                folder_item.setToolTip(r.folder_path)
+                t.setItem(i, 6, folder_item)
+        finally:
+            t.blockSignals(False)
+            t.setUpdatesEnabled(True)
 
     def _fill_actions_table(self, matches: list[RuleMatch]) -> None:
         t = self.actions_table
-        t.setRowCount(len(matches))
-        for i, m in enumerate(matches):
-            status = QTableWidgetItem("PENDING")
-            status.setForeground(QColor(COLORS["text3"]))
-            t.setItem(i, 0, status)
-            orig_item = QTableWidgetItem(self._truncate_path(m.original_path))
-            orig_item.setToolTip(m.original_path)
-            t.setItem(i, 1, orig_item)
-            prop_item = QTableWidgetItem(self._truncate_path(m.proposed_path))
-            prop_item.setToolTip(m.proposed_path)
-            t.setItem(i, 2, prop_item)
-            t.setItem(i, 3, QTableWidgetItem(m.action_type.upper()))
-            t.setItem(i, 4, QTableWidgetItem(m.reason))
+        t.setUpdatesEnabled(False)
+        t.blockSignals(True)
+        try:
+            t.setRowCount(len(matches))
+            for i, m in enumerate(matches):
+                status = QTableWidgetItem("PENDING")
+                status.setForeground(QColor(COLORS["text3"]))
+                t.setItem(i, 0, status)
+                orig_item = QTableWidgetItem(self._truncate_path(m.original_path))
+                orig_item.setToolTip(m.original_path)
+                t.setItem(i, 1, orig_item)
+                prop_item = QTableWidgetItem(self._truncate_path(m.proposed_path))
+                prop_item.setToolTip(m.proposed_path)
+                t.setItem(i, 2, prop_item)
+                t.setItem(i, 3, QTableWidgetItem(m.action_type.upper()))
+                t.setItem(i, 4, QTableWidgetItem(m.reason))
+        finally:
+            t.blockSignals(False)
+            t.setUpdatesEnabled(True)
         self._refresh_actions_count()
 
     @staticmethod
