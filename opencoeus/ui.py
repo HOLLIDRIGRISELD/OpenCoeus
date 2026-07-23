@@ -95,6 +95,7 @@ class PhaseOneWorker(QThread):
             result = engine.run_phase_one(
                 lambda msg: self.message.emit(str(msg)),
                 custom_patterns=merged_patterns or None,
+                profile_id=self.profile.profile_id if self.profile and self.profile.profile_id else 1,
             )
             tree_root = build_folder_tree(self.selected_folder, settings.protected_patterns, max_depth=5)
             self.finished_tree.emit(result, tree_root)
@@ -903,6 +904,17 @@ class MainWindow(QMainWindow):
         self.phase_one_button.setEnabled(True)
         self.phase_two_button.setEnabled(True)
         self.export_button.setEnabled(True)
+        # PERSIST PROPOSED ACTIONS TO DATABASE FOR APPROVAL TRACKING.
+        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
+        actions_data = [
+            {"original_path": m.original_path, "proposed_path": m.proposed_path,
+             "action_type": m.action_type, "rule_id": m.rule_id}
+            for m in matches
+        ]
+        self.store.save_proposed_actions(profile_id, actions_data)
+        # LOAD SAVED ACTIONS TO GET THEIR DATABASE IDS.
+        saved_actions = self.store.get_proposed_actions(profile_id)
+        self._action_id_map = {a.original_path: a.id for a in saved_actions}
         self._fill_results_table(scan_result)
         self._fill_actions_table(matches)
         self._switch_page(2)
@@ -955,9 +967,15 @@ class MainWindow(QMainWindow):
             if item and item.text() != "APPROVED":
                 item.setText("APPROVED")
                 item.setForeground(QColor(COLORS["green"]))
+                # PERSIST APPROVAL TO DATABASE.
+                action_id = self.actions_table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                if action_id:
+                    self.store.approve_action(action_id)
         self._refresh_actions_count()
 
     def _approve_all(self) -> None:
+        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
+        self.store.approve_all_actions(profile_id)
         for r in range(self.actions_table.rowCount()):
             item = self.actions_table.item(r, 0)
             if item:
@@ -973,13 +991,20 @@ class MainWindow(QMainWindow):
         self._refresh_actions_count()
 
     def _sync_proposed_matches_from_table(self) -> None:
+        # REBUILDS proposed_matches FROM TABLE ROWS USING PATH LOOKUP INSTEAD OF INDEX.
         remaining: list[RuleMatch] = []
+        known_paths = {m.original_path for m in self.proposed_matches}
         for r in range(self.actions_table.rowCount()):
             status_item = self.actions_table.item(r, 0)
             if status_item and status_item.text() == "APPROVED":
                 continue
-            if r < len(self.proposed_matches):
-                remaining.append(self.proposed_matches[r])
+            path_item = self.actions_table.item(r, 1)
+            if path_item:
+                original_path = path_item.toolTip() or path_item.text()
+                for m in self.proposed_matches:
+                    if m.original_path == original_path:
+                        remaining.append(m)
+                        break
         self.proposed_matches = remaining
 
     def _refresh_actions_count(self) -> None:
@@ -1095,6 +1120,12 @@ class MainWindow(QMainWindow):
             self._set_children_check_state(item, Qt.CheckState.Unchecked)
         self._update_parent_check_state(item)
         self.folder_tree.blockSignals(False)
+        # PERSIST EXCLUSION CHANGES TO ACTIVE PROFILE.
+        if self.current_profile and self.current_profile.profile_id:
+            self.store.update_profile(
+                self.current_profile.profile_id,
+                excluded_folders=sorted(self.excluded_folders),
+            )
 
     def _set_children_check_state(self, parent: QTreeWidgetItem, state: Qt.CheckState) -> None:
         for i in range(parent.childCount()):
@@ -1172,6 +1203,9 @@ class MainWindow(QMainWindow):
             for i, m in enumerate(matches):
                 status = QTableWidgetItem("PENDING")
                 status.setForeground(QColor(COLORS["text3"]))
+                # STORE ACTION ID IN USERROLE FOR APPROVAL TRACKING.
+                action_id = self._action_id_map.get(m.original_path) if hasattr(self, '_action_id_map') else None
+                status.setData(Qt.ItemDataRole.UserRole, action_id)
                 t.setItem(i, 0, status)
                 orig_item = QTableWidgetItem(self._truncate_path(m.original_path))
                 orig_item.setToolTip(m.original_path)

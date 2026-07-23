@@ -24,28 +24,53 @@ class AuditStore:
         Base.metadata.create_all(self.engine)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)
 
-    def record_file(self, file_path: str, file_size: int, file_hash: str | None, file_status: str) -> None:
+    def record_file(self, file_path: str, file_size: int, file_hash: str | None, file_status: str,
+                    relative_path: str = "", extension: str = "", modified_at=None,
+                    folder_path: str = "") -> None:
         with self.session_factory() as session:
             audit_record = session.scalar(select(FileAudit).where(FileAudit.path == file_path))
             if audit_record is None:
-                audit_record = FileAudit(path=file_path, size=file_size, sha256=file_hash, status=file_status)
+                audit_record = FileAudit(
+                    path=file_path, size=file_size, sha256=file_hash, status=file_status,
+                    relative_path=relative_path, extension=extension, modified_at=modified_at,
+                    folder_path=folder_path,
+                )
                 session.add(audit_record)
             else:
                 audit_record.size, audit_record.sha256, audit_record.status = file_size, file_hash, file_status
                 audit_record.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+                audit_record.relative_path = relative_path or audit_record.relative_path
+                audit_record.extension = extension or audit_record.extension
+                audit_record.folder_path = folder_path or audit_record.folder_path
+                if modified_at:
+                    audit_record.modified_at = modified_at
             session.commit()
 
-    def record_files_batch(self, records: list[tuple[str, int, str | None, str]]) -> None:
+    def record_files_batch(self, records: list[tuple]) -> None:
         # BULK INSERTS OR UPDATES MULTIPLE FILE RECORDS IN A SINGLE SESSION FOR PERFORMANCE.
         with self.session_factory() as session:
-            for file_path, file_size, file_hash, file_status in records:
+            for record in records:
+                file_path, file_size, file_hash, file_status = record[0], record[1], record[2], record[3]
+                relative_path = record[4] if len(record) > 4 else ""
+                extension = record[5] if len(record) > 5 else ""
+                modified_at = record[6] if len(record) > 6 else None
+                folder_path = record[7] if len(record) > 7 else ""
                 audit_record = session.scalar(select(FileAudit).where(FileAudit.path == file_path))
                 if audit_record is None:
-                    audit_record = FileAudit(path=file_path, size=file_size, sha256=file_hash, status=file_status)
+                    audit_record = FileAudit(
+                        path=file_path, size=file_size, sha256=file_hash, status=file_status,
+                        relative_path=relative_path, extension=extension, modified_at=modified_at,
+                        folder_path=folder_path,
+                    )
                     session.add(audit_record)
                 else:
                     audit_record.size, audit_record.sha256, audit_record.status = file_size, file_hash, file_status
                     audit_record.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+                    audit_record.relative_path = relative_path or audit_record.relative_path
+                    audit_record.extension = extension or audit_record.extension
+                    audit_record.folder_path = folder_path or audit_record.folder_path
+                    if modified_at:
+                        audit_record.modified_at = modified_at
             session.commit()
 
     def reserve_title(self, proposed_title: str, source_file_path: str) -> str:

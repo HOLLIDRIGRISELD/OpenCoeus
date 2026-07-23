@@ -55,7 +55,8 @@ class ScanEngine:
         return scan_result
 
     def run_phase_one(self, progress_callback: Callable[[str], None] | None = None,
-                      custom_patterns: list[str] | None = None) -> ScanResult:
+                      custom_patterns: list[str] | None = None,
+                      profile_id: int = 1) -> ScanResult:
         # PHASE 1: DISCOVERS THE FOLDER TREE AND CLASSIFIES EVERY FOLDER.
         scan_result = ScanResult()
         merged_patterns = self.settings.protected_patterns + (custom_patterns or [])
@@ -66,7 +67,7 @@ class ScanEngine:
         )
         scan_result.classifications = classify_tree(folder_tree_root, custom_patterns)
         scan_result.folder_tree_flat = flatten_tree(folder_tree_root)
-        self.store.save_classifications(1, scan_result.classifications)
+        self.store.save_classifications(profile_id, scan_result.classifications)
         return scan_result
 
     def run_phase_two(self, excluded_folders: set[str] | None = None,
@@ -117,7 +118,11 @@ class ScanEngine:
             if use_extraction and file_status in {"unique", "protected"} and file_record.path.suffix.lower() in {".pdf", ".docx"}:
                 suggested_title = suggest_title(extract_text(file_record.path), file_record.path.stem)
                 suggested_title = self.store.reserve_title(suggested_title, str(file_record.path))
-            batch_records.append((str(file_record.path), file_record.size, file_hash or None, file_status))
+            batch_records.append((
+                str(file_record.path), file_record.size, file_hash or None, file_status,
+                file_record.relative_path, file_record.extension,
+                file_record.modified_at, file_record.folder_path,
+            ))
             scan_result.rows.append(ManifestRow(
                 path=str(file_record.path),
                 size=file_record.size,

@@ -595,17 +595,30 @@ class AuditStoreExtendedColumnsTests(unittest.TestCase):
             database_path = Path(temporary_directory) / "test.sqlite3"
             store = AuditStore(f"sqlite:///{database_path.as_posix()}")
             store.record_file("/test/doc.pdf", 2048, "abc123", "unique")
-            # EXTENDED COLUMNS SHOULD EXIST AND DEFAULT TO NONE.
+            # EXTENDED COLUMNS SHOULD EXIST AND DEFAULT TO EMPTY STRINGS WHEN NOT PROVIDED.
             with store.session_factory() as session:
                 from sqlalchemy import text
                 result = session.execute(
                     text("SELECT relative_path, extension, modified_at, folder_path FROM file_audits LIMIT 1")
                 ).fetchone()
                 self.assertIsNotNone(result)
-                self.assertIsNone(result[0])
-                self.assertIsNone(result[1])
+                self.assertEqual(result[0], "")
+                self.assertEqual(result[1], "")
                 self.assertIsNone(result[2])
-                self.assertIsNone(result[3])
+                self.assertEqual(result[3], "")
+            # EXTENDED COLUMNS SHOULD PERSIST WHEN PROVIDED.
+            store.record_file(
+                "/test/doc2.pdf", 4096, "def456", "unique",
+                relative_path="doc2.pdf", extension=".pdf",
+                modified_at=None, folder_path="/test",
+            )
+            with store.session_factory() as session:
+                result2 = session.execute(
+                    text("SELECT relative_path, extension, folder_path FROM file_audits WHERE path = '/test/doc2.pdf'")
+                ).fetchone()
+                self.assertEqual(result2[0], "doc2.pdf")
+                self.assertEqual(result2[1], ".pdf")
+                self.assertEqual(result2[2], "/test")
             store.close()
 
 

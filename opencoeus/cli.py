@@ -105,13 +105,27 @@ def _run_scan(args) -> int:
         print(f"Error: Not a readable folder: {args.folder}", file=sys.stderr)
         return 1
     extract_documents = not args.no_document_text
+    store = AuditStore()
+    # LOAD PROFILE IF SPECIFIED AND APPLY ITS SETTINGS.
+    if args.profile:
+        loaded = load_profile_by_name(store, args.profile)
+        if loaded is None:
+            print(f"Warning: Profile '{args.profile}' not found. Using defaults.", file=sys.stderr)
+        else:
+            if loaded.excluded_folders:
+                print(f"Profile '{args.profile}': excluding {len(loaded.excluded_folders)} folders.")
+            if loaded.custom_protected_patterns:
+                print(f"Profile '{args.profile}': using {len(loaded.custom_protected_patterns)} custom patterns.")
+            if not loaded.document_extraction:
+                extract_documents = False
     settings = ScanSettings(args.folder, extract_documents=extract_documents)
-    scan_engine = ScanEngine(settings)
+    scan_engine = ScanEngine(settings, store)
     scan_result = scan_engine.run(print)
     write_manifest(scan_result, args.output)
     print(f"Scanned {len(scan_result.rows)} files; found {scan_result.duplicate_count} duplicates. Manifest: {args.output}")
     for scan_error in scan_result.errors:
         print(f"WARNING: {scan_error}")
+    store.close()
     return 0
 
 
