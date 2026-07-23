@@ -66,8 +66,8 @@ class WriteManifestTests(unittest.TestCase):
             self.assertEqual(rows[1]["path"], "/b.txt")
             self.assertEqual(rows[1]["status"], "duplicate")
 
-    def test_csv_has_six_columns(self):
-        # VERIFIES THAT THE CSV OUTPUT CONTAINS EXACTLY SIX COLUMNS.
+    def test_csv_has_ten_columns(self):
+        # VERIFIES THAT THE CSV OUTPUT CONTAINS EXACTLY TEN COLUMNS.
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_path = Path(temporary_directory) / "test_manifest.csv"
             result = ScanResult()
@@ -75,7 +75,10 @@ class WriteManifestTests(unittest.TestCase):
             write_manifest(result, output_path)
             with output_path.open(encoding="utf-8-sig") as csv_file:
                 reader = csv.DictReader(csv_file)
-                self.assertEqual(reader.fieldnames, ["path", "size", "sha256", "status", "duplicate_of", "suggested_title"])
+                self.assertEqual(reader.fieldnames, [
+                    "path", "size", "sha256", "status", "duplicate_of", "suggested_title",
+                    "relative_path", "extension", "modified_at", "folder_path",
+                ])
 
     def test_empty_result_produces_header_only_csv(self):
         # VERIFIES THAT AN EMPTY SCAN RESULT PRODUCES A CSV WITH ONLY THE HEADER ROW.
@@ -176,6 +179,122 @@ class ScanEngineEdgeCaseTests(unittest.TestCase):
             statuses = [row.status for row in result.rows]
             self.assertIn("unique", statuses)
             self.assertIn("duplicate", statuses)
+            store.close()
+
+
+class ScanEnginePhaseTests(unittest.TestCase):
+    def _create_store_outside_root(self, test_root: Path) -> AuditStore:
+        # PLACES THE SQLITE DATABASE OUTSIDE THE SCAN ROOT SO THE SCANNER DOES NOT PICK IT UP.
+        import tempfile as _tempfile
+        database_fd, database_path_str = _tempfile.mkstemp(suffix=".sqlite3", prefix="audit_test_")
+        import os
+        os.close(database_fd)
+        os.unlink(database_path_str)
+        return AuditStore(f"sqlite:///{Path(database_path_str).as_posix()}")
+
+    def test_phase_one_populates_classifications(self):
+        # VERIFIES THAT run_phase_one RETURNS CLASSIFICATIONS FOR EVERY FOLDER IN THE TREE.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "alpha").mkdir()
+            (test_root / "beta").mkdir()
+            store = self._create_store_outside_root(test_root)
+            engine = ScanEngine(ScanSettings(test_root, extract_documents=False), store)
+            result = engine.run_phase_one()
+            self.assertGreater(len(result.classifications), 0)
+            self.assertGreater(len(result.folder_tree_flat), 0)
+            store.close()
+
+    def test_phase_one_saves_classifications_to_database(self):
+        # VERIFIES THAT run_phase_one PERSISTS CLASSIFICATIONS IN THE DATABASE.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "sub").mkdir()
+            store = self._create_store_outside_root(test_root)
+            engine = ScanEngine(ScanSettings(test_root, extract_documents=False), store)
+            engine.run_phase_one()
+            saved = store.get_classifications(1)
+            self.assertGreater(len(saved), 0)
+            store.close()
+
+    def test_phase_two_scans_files(self):
+        # VERIFIES THAT run_phase_two SCANS FILES AND RETURNS MANIFEST ROWS.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "file.txt").write_text("hello")
+            store = self._create_store_outside_root(test_root)
+            engine = ScanEngine(ScanSettings(test_root, extract_documents=False), store)
+            result = engine.run_phase_two()
+            self.assertEqual(len(result.rows), 1)
+            store.close()
+
+    def test_phase_two_excludes_specified_folders(self):
+        # VERIFIES THAT run_phase_two SKIPS FILES IN THE EXCLUDED FOLDERS SET.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "keep").mkdir()
+            (test_root / "skip").mkdir()
+            (test_root / "keep" / "a.txt").write_text("keep")
+            (test_root / "skip" / "b.txt").write_text("skip")
+            store = self._create_store_outside_root(test_root)
+            engine = ScanEngine(ScanSettings(test_root, extract_documents=False), store)
+            result = engine.run_phase_two(excluded_folders={(test_root / "skip").as_posix()})
+            self.assertEqual(len(result.rows), 1)
+            self.assertIn("a.txt", result.rows[0].path)
+            store.close()
+
+
+class ScanEngineExtendedMetadataTests(unittest.TestCase):
+    def _create_store_outside_root(self, test_root: Path) -> AuditStore:
+        # PLACES THE SQLITE DATABASE OUTSIDE THE SCAN ROOT SO THE SCANNER DOES NOT PICK IT UP.
+        import tempfile as _tempfile
+        database_fd, database_path_str = _tempfile.mkstemp(suffix=".sqlite3", prefix="audit_test_")
+        import os
+        os.close(database_fd)
+        os.unlink(database_path_str)
+        return AuditStore(f"sqlite:///{Path(database_path_str).as_posix()}")
+
+    def test_manifest_row_includes_relative_path(self):
+        # VERIFIES THAT MANIFEST ROWS POPULATED BY THE ENGINE INCLUDE THE RELATIVE_PATH FIELD.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "sub").mkdir()
+            (test_root / "sub" / "doc.txt").write_text("content")
+            store = self._create_store_outside_root(test_root)
+            result = ScanEngine(ScanSettings(test_root, extract_documents=False), store).run()
+            self.assertEqual(len(result.rows), 1)
+            self.assertEqual(result.rows[0].relative_path, "sub/doc.txt")
+            store.close()
+
+    def test_manifest_row_includes_extension(self):
+        # VERIFIES THAT MANIFEST ROWS INCLUDE THE FILE EXTENSION IN LOWERCASE.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "photo.JPG").write_bytes(b"\x89PNG")
+            store = self._create_store_outside_root(test_root)
+            result = ScanEngine(ScanSettings(test_root, extract_documents=False), store).run()
+            self.assertEqual(result.rows[0].extension, ".jpg")
+            store.close()
+
+    def test_manifest_row_includes_folder_path(self):
+        # VERIFIES THAT MANIFEST ROWS INCLUDE THE PARENT FOLDER PATH.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "docs").mkdir()
+            (test_root / "docs" / "readme.md").write_text("# Hello")
+            store = self._create_store_outside_root(test_root)
+            result = ScanEngine(ScanSettings(test_root, extract_documents=False), store).run()
+            self.assertEqual(result.rows[0].folder_path, (test_root / "docs").as_posix())
+            store.close()
+
+    def test_manifest_row_includes_modified_at(self):
+        # VERIFIES THAT MANIFEST ROWS INCLUDE THE FILE MODIFICATION TIMESTAMP.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "file.txt").write_text("data")
+            store = self._create_store_outside_root(test_root)
+            result = ScanEngine(ScanSettings(test_root, extract_documents=False), store).run()
+            self.assertNotEqual(result.rows[0].modified_at, "")
             store.close()
 
 
