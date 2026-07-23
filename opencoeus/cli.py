@@ -21,6 +21,34 @@ from .profiles import (
 )
 from .rules_engine import RulesEngine
 
+# DEFAULT RULES THAT APPLY COMMON ORGANIZATION PATTERNS OUT OF THE BOX.
+DEFAULT_RULES = [
+    {"id": 1, "name": "Documents", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".pdf", ".docx", ".doc", ".xlsx", ".pptx", ".txt", ".rtf", ".odt"]}',
+     "destination_template": "{folder}/Documents/{filename}", "action_type": "move"},
+    {"id": 2, "name": "Images", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff"]}',
+     "destination_template": "{folder}/Images/{filename}", "action_type": "move"},
+    {"id": 3, "name": "Audio", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a"]}',
+     "destination_template": "{folder}/Audio/{filename}", "action_type": "move"},
+    {"id": 4, "name": "Video", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"]}',
+     "destination_template": "{folder}/Video/{filename}", "action_type": "move"},
+    {"id": 5, "name": "Archives", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"]}',
+     "destination_template": "{folder}/Archives/{filename}", "action_type": "move"},
+    {"id": 6, "name": "Code", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".cs", ".rb", ".go", ".rs", ".html", ".css", ".json", ".xml", ".yaml", ".yml", ".toml"]}',
+     "destination_template": "{folder}/Code/{filename}", "action_type": "move"},
+    {"id": 7, "name": "Installers", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".msi", ".exe", ".dmg", ".deb", ".rpm", ".apk"]}',
+     "destination_template": "{folder}/Installers/{filename}", "action_type": "move"},
+    {"id": 8, "name": "Old files archive", "rule_type": "date", "enabled": True, "priority": 50,
+     "rule_config": '{"older_than_days": 365}',
+     "destination_template": "{folder}/Archive/{date_year}/{filename}", "action_type": "move"},
+]
+
 
 def main() -> int:
     command_parser = argparse.ArgumentParser(description="OpenCoeus offline scan and organization (never modifies files without approval).")
@@ -155,23 +183,44 @@ def _run_organize(args) -> int:
         return 1
     extract_documents = not args.no_document_text
     settings = ScanSettings(args.folder, extract_documents=extract_documents)
-    scan_engine = ScanEngine(settings)
-    scan_result = scan_engine.run(print)
-    rules = []
-    if args.rules_file and args.rules_file.is_file():
-        with args.rules_file.open(encoding="utf-8") as rules_json:
-            rules = json.load(rules_json)
+    store = AuditStore()
+
+    # LOAD PROFILE IF SPECIFIED.
     profile = ProfileConfig()
     if args.profile:
-        store = AuditStore()
         loaded = load_profile_by_name(store, args.profile)
         if loaded is None:
             print(f"Warning: Profile '{args.profile}' not found. Using defaults.", file=sys.stderr)
         else:
             profile = loaded
-        store.close()
+
+    # LOAD RULES FROM FILE OR USE DEFAULTS.
+    rules = list(DEFAULT_RULES)
+    if args.rules_file and args.rules_file.is_file():
+        with args.rules_file.open(encoding="utf-8") as rules_json:
+            rules = json.load(rules_json)
+        print(f"Loaded {len(rules)} rules from {args.rules_file}")
+
+    # PHASE 1: CLASSIFY FOLDERS.
+    print("Phase 1: Classifying folders...")
+    tree = build_folder_tree(args.folder, settings.protected_patterns)
+    classifications = classify_tree(tree, profile.custom_protected_patterns or None)
+    excluded_folders = {
+        c["folder_path"] for c in classifications
+        if c["recommended_action"] == "exclude"
+    }
+    print(f"  Excluded {len(excluded_folders)} folders automatically.")
+
+    # PHASE 2: SCAN FILES WITH EXCLUSIONS AND APPLY RULES.
+    print("Phase 2: Scanning files...")
+    scan_engine = ScanEngine(settings)
+    scan_result = scan_engine.run_phase_two(excluded_folders, print)
+    print(f"  Scanned {len(scan_result.rows)} files, found {scan_result.duplicate_count} duplicates.")
+
+    # APPLY RULES ENGINE.
     rules_engine = RulesEngine(profile)
     matches = rules_engine.evaluate(scan_result.rows, rules)
+
     if matches:
         import csv
         with args.output.open("w", newline="", encoding="utf-8-sig") as csv_file:
@@ -185,9 +234,17 @@ def _run_organize(args) -> int:
                     "rule_id": match.rule_id or "",
                     "reason": match.reason,
                 })
-        print(f"Proposed {len(matches)} actions. Saved to {args.output}")
+        print(f"\nProposed {len(matches)} actions. Saved to {args.output}")
+        print("\nPreview (first 10):")
+        for match in matches[:10]:
+            print(f"  {match.action_type:6s}  {match.original_path}")
+            print(f"         -> {match.proposed_path}")
+            print(f"         {match.reason}")
+        if len(matches) > 10:
+            print(f"  ... and {len(matches) - 10} more.")
     else:
-        print("No actions proposed. Add rules via --rules-file to organize files.")
+        print("\nNo actions proposed. Files are already organized or no rules matched.")
+    store.close()
     return 0
 
 
