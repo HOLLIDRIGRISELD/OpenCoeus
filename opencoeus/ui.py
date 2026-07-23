@@ -151,7 +151,7 @@ class SidebarButton(QToolButton):
                 border-radius: 8px;
                 background: transparent;
                 padding: 6px 12px;
-                text-align: left;
+                qproperty-alignment: 4;
                 font-size: 13px;
                 color: {COLORS["text2"]};
             }}
@@ -1096,7 +1096,9 @@ class MainWindow(QMainWindow):
         t = self.results_table
         t.setRowCount(len(result.rows))
         for i, r in enumerate(result.rows):
-            t.setItem(i, 0, QTableWidgetItem(r.path))
+            path_item = QTableWidgetItem(self._truncate_path(r.path))
+            path_item.setToolTip(r.path)
+            t.setItem(i, 0, path_item)
             t.setItem(i, 1, QTableWidgetItem(self._fmt(r.size)))
             status = QTableWidgetItem(r.status.upper())
             color_map = {
@@ -1107,10 +1109,15 @@ class MainWindow(QMainWindow):
             if r.status in color_map:
                 status.setForeground(QColor(color_map[r.status]))
             t.setItem(i, 2, status)
-            t.setItem(i, 3, QTableWidgetItem(r.duplicate_of))
+            dup_item = QTableWidgetItem(self._truncate_path(r.duplicate_of) if r.duplicate_of else "")
+            if r.duplicate_of:
+                dup_item.setToolTip(r.duplicate_of)
+            t.setItem(i, 3, dup_item)
             t.setItem(i, 4, QTableWidgetItem(r.suggested_title))
             t.setItem(i, 5, QTableWidgetItem(r.extension))
-            t.setItem(i, 6, QTableWidgetItem(r.folder_path))
+            folder_item = QTableWidgetItem(self._truncate_path(r.folder_path))
+            folder_item.setToolTip(r.folder_path)
+            t.setItem(i, 6, folder_item)
 
     def _fill_actions_table(self, matches: list[RuleMatch]) -> None:
         t = self.actions_table
@@ -1119,11 +1126,24 @@ class MainWindow(QMainWindow):
             status = QTableWidgetItem("PENDING")
             status.setForeground(QColor(COLORS["text3"]))
             t.setItem(i, 0, status)
-            t.setItem(i, 1, QTableWidgetItem(m.original_path))
-            t.setItem(i, 2, QTableWidgetItem(m.proposed_path))
+            orig_item = QTableWidgetItem(self._truncate_path(m.original_path))
+            orig_item.setToolTip(m.original_path)
+            t.setItem(i, 1, orig_item)
+            prop_item = QTableWidgetItem(self._truncate_path(m.proposed_path))
+            prop_item.setToolTip(m.proposed_path)
+            t.setItem(i, 2, prop_item)
             t.setItem(i, 3, QTableWidgetItem(m.action_type.upper()))
             t.setItem(i, 4, QTableWidgetItem(m.reason))
         self._refresh_actions_count()
+
+    @staticmethod
+    def _truncate_path(path: str, max_parts: int = 3) -> str:
+        if not path:
+            return ""
+        parts = Path(path).parts
+        if len(parts) <= max_parts:
+            return path
+        return ".../" + "/".join(parts[-max_parts:])
 
     @staticmethod
     def _fmt(size: int) -> str:
