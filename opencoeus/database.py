@@ -172,22 +172,23 @@ class AuditStore:
     def save_classifications(self, profile_id: int, classifications: list[dict]) -> None:
         # SAVES A LIST OF FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE.
         with self.session_factory() as session:
-            # CLEAR EXISTING CLASSIFICATIONS FOR THIS PROFILE.
-            existing = session.scalars(
-                select(FolderClassification).where(FolderClassification.scan_profile_id == profile_id)
-            ).all()
-            for item in existing:
-                session.delete(item)
-            # INSERT NEW CLASSIFICATIONS.
-            for classification_data in classifications:
-                session.add(FolderClassification(
+            # BULK DELETE EXISTING CLASSIFICATIONS FOR THIS PROFILE.
+            session.query(FolderClassification).filter(
+                FolderClassification.scan_profile_id == profile_id
+            ).delete(synchronize_session="fetch")
+            # BULK INSERT NEW CLASSIFICATIONS.
+            new_objects = [
+                FolderClassification(
                     scan_profile_id=profile_id,
-                    folder_path=classification_data["folder_path"],
-                    classification=classification_data["classification"],
-                    recommended_action=classification_data["recommended_action"],
-                    reason=classification_data.get("reason", ""),
-                    user_override=classification_data.get("user_override"),
-                ))
+                    folder_path=cd["folder_path"],
+                    classification=cd["classification"],
+                    recommended_action=cd["recommended_action"],
+                    reason=cd.get("reason", ""),
+                    user_override=cd.get("user_override"),
+                )
+                for cd in classifications
+            ]
+            session.add_all(new_objects)
             session.commit()
 
     def get_classifications(self, profile_id: int) -> list[FolderClassification]:

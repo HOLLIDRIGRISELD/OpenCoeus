@@ -29,6 +29,12 @@ class RulesEngine:
     def evaluate(self, manifest_rows: list[ManifestRow], rules: list[dict]) -> list[RuleMatch]:
         # EVALUATES ALL ENABLED RULES AGAINST EVERY MANIFEST ROW AND COLLECTS MATCHES.
         sorted_rules = sorted(rules, key=lambda r: r.get("priority", 0))
+        # PRE-PARSE ALL RULE CONFIGS ONCE TO AVOID PER-ROW JSON PARSING.
+        for rule in sorted_rules:
+            if isinstance(rule.get("rule_config"), str):
+                rule["_parsed_config"] = json.loads(rule["rule_config"])
+            else:
+                rule["_parsed_config"] = rule.get("rule_config", {})
         profile_excluded = set(self.profile.excluded_folders) if self.profile else set()
         profile_included = self.profile.included_folders if self.profile else []
         matches: list[RuleMatch] = []
@@ -52,7 +58,7 @@ class RulesEngine:
     def _rule_matches(self, row: ManifestRow, rule: dict) -> bool:
         # CHECKS WHETHER A SINGLE RULE MATCHES A MANIFEST ROW BASED ON ITS TYPE AND CONFIG.
         rule_type = rule.get("rule_type", "")
-        config = json.loads(rule.get("rule_config", "{}")) if isinstance(rule.get("rule_config"), str) else rule.get("rule_config", {})
+        config = rule.get("_parsed_config", {})
         if rule_type == "extension":
             return self._matches_extension(row, config)
         if rule_type == "pattern":

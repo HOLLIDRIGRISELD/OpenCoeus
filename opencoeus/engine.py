@@ -86,16 +86,18 @@ class ScanEngine:
                     extract_documents: bool | None = None) -> None:
         # SHARED FILE SCANNING LOGIC USED BY BOTH run() AND run_phase_two().
         discovered_files: list[FileRecord] = list(iter_files(self.settings.root, scan_result.errors.append))
+        # FILTER IN-PLACE TO AVOID CREATING EXTRA LIST COPIES.
         if excluded_folders:
             discovered_files = [f for f in discovered_files if not self._is_in_excluded_folder(f, excluded_folders)]
         if included_folders:
             discovered_files = [f for f in discovered_files if self._is_in_included_folder(f, included_folders)]
         use_extraction = extract_documents if extract_documents is not None else self.settings.extract_documents
+        # GROUP BY SIZE IN SINGLE PASS FOR DUPLICATE DETECTION.
         files_grouped_by_size: dict[int, list[FileRecord]] = defaultdict(list)
         for file_record in discovered_files:
             files_grouped_by_size[file_record.size].append(file_record)
         first_file_by_hash: dict[str, Path] = {}
-        batch_records: list[tuple[str, int, str | None, str]] = []
+        batch_records: list[tuple] = []
         total_files = len(discovered_files)
         for file_number, file_record in enumerate(discovered_files, 1):
             if progress_callback and (file_number % 50 == 0 or file_number == total_files):

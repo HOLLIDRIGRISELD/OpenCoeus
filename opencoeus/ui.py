@@ -138,6 +138,19 @@ class PhaseTwoWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class ExportWorker(QThread):
+    finished_export = pyqtSignal(str)
+
+    def __init__(self, scan_result: ScanResult, path: Path) -> None:
+        super().__init__()
+        self.scan_result = scan_result
+        self.path = path
+
+    def run(self) -> None:
+        write_manifest(self.scan_result, self.path)
+        self.finished_export.emit(str(self.path))
+
+
 class RuleEditDialog(QDialog):
     def __init__(self, parent=None, rule: dict | None = None) -> None:
         super().__init__(parent)
@@ -1067,7 +1080,7 @@ class MainWindow(QMainWindow):
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(38)
         table.setShowGrid(False)
-        table.setSortingEnabled(False)
+        table.setSortingEnabled(True)
         table.viewport().setAutoFillBackground(False)
         return table
 
@@ -1149,6 +1162,13 @@ class MainWindow(QMainWindow):
         if self._log_buffer:
             self.audit_log.append("\n".join(self._log_buffer))
             self._log_buffer.clear()
+            # CAP LOG AT 5000 LINES TO PREVENT UNBOUNDED MEMORY GROWTH.
+            doc = self.audit_log.document()
+            if doc.blockCount() > 5000:
+                cursor = doc.rootFrame().firstPosition()
+                cursor_end = doc.findPositionByBlockNumber(doc.blockCount() - 5000)
+                cursor.select(cursor.SelectionType.DocumentUnderCursor)
+                cursor.removeSelectedText()
         self._log_timer.stop()
 
     # ------------------------------------------------------------------ #
@@ -1216,8 +1236,12 @@ class MainWindow(QMainWindow):
             return
         path, _ = QFileDialog.getSaveFileName(self, "Save manifest", "opencoeus-manifest.csv", "CSV files (*.csv)")
         if path:
-            write_manifest(self.scan_result, Path(path))
-            self._on_log_message(f"Manifest saved: {path}")
+            self._on_log_message(f"Exporting manifest to {path}...")
+            self.export_worker = ExportWorker(self.scan_result, Path(path))
+            self.export_worker.finished_export.connect(
+                lambda p: self._on_log_message(f"<b>Manifest saved:</b> {p}")
+            )
+            self.export_worker.start()
 
     # ------------------------------------------------------------------ #
     #  THREAD CLEANUP                                                      #
@@ -1439,6 +1463,7 @@ class MainWindow(QMainWindow):
         t = self.results_table
         t.setUpdatesEnabled(False)
         t.blockSignals(True)
+        t.setSortingEnabled(False)
         try:
             t.setRowCount(len(result.rows))
             for i, r in enumerate(result.rows):
@@ -1465,6 +1490,7 @@ class MainWindow(QMainWindow):
                 folder_item.setToolTip(r.folder_path)
                 t.setItem(i, 6, folder_item)
         finally:
+            t.setSortingEnabled(True)
             t.blockSignals(False)
             t.setUpdatesEnabled(True)
 
@@ -1472,12 +1498,12 @@ class MainWindow(QMainWindow):
         t = self.actions_table
         t.setUpdatesEnabled(False)
         t.blockSignals(True)
+        t.setSortingEnabled(False)
         try:
             t.setRowCount(len(matches))
             for i, m in enumerate(matches):
                 status = QTableWidgetItem("PENDING")
                 status.setForeground(QColor(COLORS["text3"]))
-                # STORE ACTION ID IN USERROLE FOR APPROVAL TRACKING.
                 action_id = self._action_id_map.get(m.original_path) if hasattr(self, '_action_id_map') else None
                 status.setData(Qt.ItemDataRole.UserRole, action_id)
                 t.setItem(i, 0, status)
@@ -1490,6 +1516,7 @@ class MainWindow(QMainWindow):
                 t.setItem(i, 3, QTableWidgetItem(m.action_type.upper()))
                 t.setItem(i, 4, QTableWidgetItem(m.reason))
         finally:
+            t.setSortingEnabled(True)
             t.blockSignals(False)
             t.setUpdatesEnabled(True)
         self._refresh_actions_count()
