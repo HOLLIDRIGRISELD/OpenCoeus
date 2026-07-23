@@ -54,26 +54,26 @@ DEFAULT_RULES = [
 ]
 
 COLORS = {
-    "bg":          "#0d1117",
-    "surface":     "#161b22",
-    "surface2":    "#1c2333",
-    "surface3":    "#21283b",
-    "border":      "#30363d",
-    "border_light":"#3d444d",
-    "text":        "#e6edf3",
-    "text2":       "#8b949e",
-    "text3":       "#6e7681",
-    "accent":      "#58a6ff",
-    "accent2":     "#1f6feb",
-    "green":       "#3fb950",
-    "green_bg":    "#12261e",
-    "red":         "#f85149",
-    "red_bg":      "#2d1215",
-    "yellow":      "#d29922",
-    "yellow_bg":   "#2e2210",
-    "orange":      "#db6d28",
-    "purple":      "#bc8cff",
-    "sidebar_bg":  "#0d1117",
+    "bg":          "#14151e",
+    "surface":     "#1a1b2e",
+    "surface2":    "#1f2038",
+    "surface3":    "#252642",
+    "border":      "#2e3048",
+    "border_light":"#3a3c58",
+    "text":        "#e2e8f0",
+    "text2":       "#94a3b8",
+    "text3":       "#64748b",
+    "accent":      "#38bdf8",
+    "accent2":     "#0284c7",
+    "green":       "#4ade80",
+    "green_bg":    "#14302a",
+    "red":         "#f87171",
+    "red_bg":      "#3b1518",
+    "yellow":      "#facc15",
+    "yellow_bg":   "#332e0e",
+    "orange":      "#fb923c",
+    "purple":      "#a78bfa",
+    "sidebar_bg":  "#111219",
 }
 
 
@@ -148,7 +148,7 @@ class SidebarButton(QToolButton):
         self.setStyleSheet(f"""
             QToolButton {{
                 border: none;
-                border-radius: 8px;
+                border-radius: 12px;
                 background: transparent;
                 padding: 6px 20px 6px 12px;
                 font-size: 13px;
@@ -185,7 +185,7 @@ class StatCard(QWidget):
                 background: {COLORS["surface"]};
                 border: 1px solid {COLORS["border"]};
                 border-left: 3px solid {accent};
-                border-radius: 10px;
+                border-radius: 14px;
             }}
         """)
 
@@ -283,13 +283,13 @@ class ProfileEditDialog(QDialog):
             QLabel {{ color: {COLORS["text"]}; }}
             QLineEdit {{
                 background: {COLORS["surface2"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 6px;
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
                 padding: 6px 10px; font-size: 13px;
             }}
             QLineEdit:focus {{ border: 1px solid {COLORS["accent"]}; }}
             QTextEdit {{
                 background: {COLORS["surface2"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 6px;
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
                 padding: 6px; font-size: 12px;
             }}
             QTextEdit:focus {{ border: 1px solid {COLORS["accent"]}; }}
@@ -298,7 +298,7 @@ class ProfileEditDialog(QDialog):
             }}
             QCheckBox::indicator {{
                 width: 16px; height: 16px;
-                border: 1px solid {COLORS["border"]}; border-radius: 3px;
+                border: 1px solid {COLORS["border"]}; border-radius: 6px;
                 background: {COLORS["surface2"]};
             }}
             QCheckBox::indicator:checked {{
@@ -306,7 +306,7 @@ class ProfileEditDialog(QDialog):
             }}
             QPushButton {{
                 background: {COLORS["surface3"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 6px;
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
                 padding: 6px 14px; font-size: 13px;
             }}
             QPushButton:hover {{ background: {COLORS["border"]}; }}
@@ -375,14 +375,14 @@ class MainWindow(QMainWindow):
             QLabel {{ color: {COLORS["text"]}; }}
             QLineEdit {{
                 background: {COLORS["surface2"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                border: 1px solid {COLORS["border"]}; border-radius: 12px;
                 padding: 8px 12px; font-size: 13px;
                 selection-background-color: {COLORS["accent2"]};
             }}
             QLineEdit:focus {{ border: 1px solid {COLORS["accent"]}; }}
             QPushButton {{
                 background: {COLORS["surface3"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                border: 1px solid {COLORS["border"]}; border-radius: 12px;
                 padding: 8px 16px; font-size: 13px; font-weight: 500;
             }}
             QPushButton:hover {{ background: {COLORS["border"]}; border-color: {COLORS["border_light"]}; }}
@@ -392,10 +392,10 @@ class MainWindow(QMainWindow):
             }}
             QTreeWidget {{
                 background: {COLORS["surface"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                border: 1px solid {COLORS["border"]}; border-radius: 12px;
                 padding: 4px; font-size: 12px; outline: none;
             }}
-            QTreeWidget::item {{ padding: 4px 6px; border: none; border-radius: 4px; }}
+            QTreeWidget::item {{ padding: 4px 6px; border: none; border-radius: 8px; }}
             QTreeWidget::item:selected {{ background: {COLORS["accent2"]}; }}
             QTreeWidget::item:hover {{ background: {COLORS["surface3"]}; }}
             QTreeWidget::branch {{ background: {COLORS["surface"]}; }}
@@ -406,22 +406,22 @@ class MainWindow(QMainWindow):
             }}
             QTableWidget {{
                 background: {COLORS["surface"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                border: 1px solid {COLORS["border"]}; border-radius: 12px;
                 gridline-color: {COLORS["border"]}; font-size: 12px;
                 selection-background-color: {COLORS["accent2"]}; outline: none;
             }}
-            QTableWidget::item {{ padding: 6px 10px; }}
+            QTableWidget::item {{ padding: 6px 10px; border-radius: 8px; }}
             QListWidget {{
                 background: {COLORS["surface"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                border: 1px solid {COLORS["border"]}; border-radius: 12px;
                 padding: 4px; font-size: 12px; outline: none;
             }}
-            QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
+            QListWidget::item {{ padding: 6px 8px; border-radius: 8px; }}
             QListWidget::item:selected {{ background: {COLORS["accent2"]}; }}
             QListWidget::item:hover {{ background: {COLORS["surface3"]}; }}
             QTextEdit {{
                 background: {COLORS["surface"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                border: 1px solid {COLORS["border"]}; border-radius: 12px;
                 padding: 8px; font-family: 'Cascadia Code', 'Consolas', monospace;
                 font-size: 11px; selection-background-color: {COLORS["accent2"]};
             }}
@@ -430,13 +430,13 @@ class MainWindow(QMainWindow):
                 background: {COLORS["surface"]}; width: 8px; border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: {COLORS["border"]}; border-radius: 4px; min-height: 30px;
+                background: {COLORS["border"]}; border-radius: 6px; min-height: 30px;
             }}
             QScrollBar::handle:vertical:hover {{ background: {COLORS["text3"]}; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
             QScrollBar:horizontal {{ height: 8px; }}
             QScrollBar::handle:horizontal {{
-                background: {COLORS["border"]}; border-radius: 4px; min-width: 30px;
+                background: {COLORS["border"]}; border-radius: 6px; min-width: 30px;
             }}
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
             QProgressBar {{
