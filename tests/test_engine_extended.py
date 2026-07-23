@@ -111,8 +111,12 @@ class WriteManifestTests(unittest.TestCase):
 class ScanEngineEdgeCaseTests(unittest.TestCase):
     def _create_store_outside_root(self, test_root: Path) -> AuditStore:
         # PLACES THE SQLITE DATABASE OUTSIDE THE SCAN ROOT SO THE SCANNER DOES NOT PICK IT UP.
-        database_path = test_root.parent / "audit_test.sqlite3"
-        return AuditStore(f"sqlite:///{database_path.as_posix()}")
+        import tempfile as _tempfile
+        database_fd, database_path_str = _tempfile.mkstemp(suffix=".sqlite3", prefix="audit_test_")
+        import os
+        os.close(database_fd)
+        os.unlink(database_path_str)
+        return AuditStore(f"sqlite:///{Path(database_path_str).as_posix()}")
 
     def test_scan_empty_directory(self):
         # VERIFIES THAT SCANNING AN EMPTY DIRECTORY PRODUCES ZERO ROWS.

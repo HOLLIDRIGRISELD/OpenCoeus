@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from .config import database_url
-from .models import Base, FileAudit, NamingHistory
+from .models import (
+    Base,
+    FileAudit,
+    FolderClassification,
+    NamingHistory,
+    OrganizationRule,
+    ProposedAction,
+    ScanProfile,
+)
 
 
 class AuditStore:
@@ -40,6 +49,240 @@ class AuditStore:
             session.add(NamingHistory(suggested_title=available_title, source_path=source_file_path))
             session.commit()
             return available_title
+
+    # STAGE 2: PROFILE MANAGEMENT METHODS.
+
+    def create_profile(self, name: str, root_path: str = "", included_folders: list[str] | None = None,
+                       excluded_folders: list[str] | None = None, custom_protected_patterns: list[str] | None = None,
+                       document_extraction: bool = True) -> ScanProfile:
+        # CREATES AND PERSISTS A NEW SCAN PROFILE WITH DEFAULT EMPTY FOLDER LISTS.
+        with self.session_factory() as session:
+            profile = ScanProfile(
+                name=name,
+                root_path=root_path,
+                included_folders=json.dumps(included_folders or []),
+                excluded_folders=json.dumps(excluded_folders or []),
+                custom_protected_patterns=json.dumps(custom_protected_patterns or []),
+                document_extraction=document_extraction,
+            )
+            session.add(profile)
+            session.commit()
+            session.refresh(profile)
+            return profile
+
+    def list_profiles(self) -> list[ScanProfile]:
+        # RETURNS ALL SAVED SCAN PROFILES ORDERED BY NAME.
+        with self.session_factory() as session:
+            return list(session.scalars(select(ScanProfile).order_by(ScanProfile.name)).all())
+
+    def get_profile(self, profile_id: int) -> ScanProfile | None:
+        # RETRIEVES A SINGLE SCAN PROFILE BY ITS ID.
+        with self.session_factory() as session:
+            return session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
+
+    def get_profile_by_name(self, profile_name: str) -> ScanProfile | None:
+        # RETRIEVES A SINGLE SCAN PROFILE BY ITS UNIQUE NAME.
+        with self.session_factory() as session:
+            return session.scalar(select(ScanProfile).where(ScanProfile.name == profile_name))
+
+    def update_profile(self, profile_id: int, **kwargs) -> ScanProfile | None:
+        # UPDATES SPECIFIED FIELDS ON A SCAN PROFILE AND RECORDS THE UPDATE TIME.
+        serializable_fields = {"included_folders", "excluded_folders", "custom_protected_patterns"}
+        with self.session_factory() as session:
+            profile = session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
+            if profile is None:
+                return None
+            for field_name, field_value in kwargs.items():
+                if field_name in serializable_fields and isinstance(field_value, list):
+                    field_value = json.dumps(field_value)
+                setattr(profile, field_name, field_value)
+            profile.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            session.commit()
+            session.refresh(profile)
+            return profile
+
+    def delete_profile(self, profile_id: int) -> bool:
+        # REMOVES A SCAN PROFILE AND ALL ITS ASSOCIATED CLASSIFICATIONS AND RULES.
+        with self.session_factory() as session:
+            profile = session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
+            if profile is None:
+                return False
+            # DELETE ASSOCIATED CLASSIFICATIONS.
+            classifications = session.scalars(
+                select(FolderClassification).where(FolderClassification.scan_profile_id == profile_id)
+            ).all()
+            for classification in classifications:
+                session.delete(classification)
+            # DELETE ASSOCIATED RULES.
+            rules = session.scalars(
+                select(OrganizationRule).where(OrganizationRule.scan_profile_id == profile_id)
+            ).all()
+            for rule in rules:
+                session.delete(rule)
+            # DELETE ASSOCIATED PROPOSED ACTIONS.
+            actions = session.scalars(
+                select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
+            ).all()
+            for action in actions:
+                session.delete(action)
+            session.delete(profile)
+            session.commit()
+            return True
+
+    # STAGE 2: FOLDER CLASSIFICATION METHODS.
+
+    def save_classifications(self, profile_id: int, classifications: list[dict]) -> None:
+        # SAVES A LIST OF FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE.
+        with self.session_factory() as session:
+            # CLEAR EXISTING CLASSIFICATIONS FOR THIS PROFILE.
+            existing = session.scalars(
+                select(FolderClassification).where(FolderClassification.scan_profile_id == profile_id)
+            ).all()
+            for item in existing:
+                session.delete(item)
+            # INSERT NEW CLASSIFICATIONS.
+            for classification_data in classifications:
+                session.add(FolderClassification(
+                    scan_profile_id=profile_id,
+                    folder_path=classification_data["folder_path"],
+                    classification=classification_data["classification"],
+                    recommended_action=classification_data["recommended_action"],
+                    reason=classification_data.get("reason", ""),
+                    user_override=classification_data.get("user_override"),
+                ))
+            session.commit()
+
+    def get_classifications(self, profile_id: int) -> list[FolderClassification]:
+        # RETURNS ALL FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE.
+        with self.session_factory() as session:
+            return list(session.scalars(
+                select(FolderClassification).where(FolderClassification.scan_profile_id == profile_id)
+            ).all())
+
+    def update_classification_override(self, classification_id: int, user_override: str | None) -> bool:
+        # UPDATES THE USER OVERRIDE FOR A SPECIFIC FOLDER CLASSIFICATION.
+        with self.session_factory() as session:
+            classification = session.scalar(
+                select(FolderClassification).where(FolderClassification.id == classification_id)
+            )
+            if classification is None:
+                return False
+            classification.user_override = user_override
+            session.commit()
+            return True
+
+    # STAGE 2: ORGANIZATION RULE METHODS.
+
+    def create_rule(self, profile_id: int, name: str, rule_type: str, rule_config: dict,
+                    destination_template: str, priority: int = 0, enabled: bool = True) -> OrganizationRule:
+        # CREATES AND PERSISTS A NEW ORGANIZATION RULE FOR A PROFILE.
+        with self.session_factory() as session:
+            rule = OrganizationRule(
+                scan_profile_id=profile_id,
+                name=name,
+                rule_type=rule_type,
+                rule_config=json.dumps(rule_config),
+                destination_template=destination_template,
+                priority=priority,
+                enabled=enabled,
+            )
+            session.add(rule)
+            session.commit()
+            session.refresh(rule)
+            return rule
+
+    def get_rules(self, profile_id: int) -> list[OrganizationRule]:
+        # RETURNS ALL ORGANIZATION RULES FOR A PROFILE ORDERED BY PRIORITY.
+        with self.session_factory() as session:
+            return list(session.scalars(
+                select(OrganizationRule)
+                .where(OrganizationRule.scan_profile_id == profile_id)
+                .order_by(OrganizationRule.priority)
+            ).all())
+
+    def get_enabled_rules(self, profile_id: int) -> list[OrganizationRule]:
+        # RETURNS ONLY ENABLED ORGANIZATION RULES FOR A PROFILE.
+        with self.session_factory() as session:
+            return list(session.scalars(
+                select(OrganizationRule)
+                .where(OrganizationRule.scan_profile_id == profile_id, OrganizationRule.enabled == True)
+                .order_by(OrganizationRule.priority)
+            ).all())
+
+    def update_rule(self, rule_id: int, **kwargs) -> OrganizationRule | None:
+        # UPDATES SPECIFIED FIELDS ON AN ORGANIZATION RULE.
+        if "rule_config" in kwargs and isinstance(kwargs["rule_config"], dict):
+            kwargs["rule_config"] = json.dumps(kwargs["rule_config"])
+        with self.session_factory() as session:
+            rule = session.scalar(select(OrganizationRule).where(OrganizationRule.id == rule_id))
+            if rule is None:
+                return None
+            for field_name, field_value in kwargs.items():
+                setattr(rule, field_name, field_value)
+            rule.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            session.commit()
+            session.refresh(rule)
+            return rule
+
+    def delete_rule(self, rule_id: int) -> bool:
+        # REMOVES AN ORGANIZATION RULE BY ITS ID.
+        with self.session_factory() as session:
+            rule = session.scalar(select(OrganizationRule).where(OrganizationRule.id == rule_id))
+            if rule is None:
+                return False
+            session.delete(rule)
+            session.commit()
+            return True
+
+    # STAGE 2: PROPOSED ACTION METHODS.
+
+    def save_proposed_actions(self, profile_id: int, actions: list[dict]) -> None:
+        # SAVES A LIST OF PROPOSED ACTIONS, CLEARING PREVIOUS ONES FOR THE PROFILE.
+        with self.session_factory() as session:
+            existing = session.scalars(
+                select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
+            ).all()
+            for item in existing:
+                session.delete(item)
+            for action_data in actions:
+                session.add(ProposedAction(
+                    scan_profile_id=profile_id,
+                    original_path=action_data["original_path"],
+                    proposed_path=action_data["proposed_path"],
+                    action_type=action_data["action_type"],
+                    rule_id=action_data.get("rule_id"),
+                ))
+            session.commit()
+
+    def get_proposed_actions(self, profile_id: int) -> list[ProposedAction]:
+        # RETURNS ALL PROPOSED ACTIONS FOR A GIVEN PROFILE.
+        with self.session_factory() as session:
+            return list(session.scalars(
+                select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
+            ).all())
+
+    def approve_action(self, action_id: int) -> bool:
+        # MARKS A PROPOSED ACTION AS APPROVED FOR FUTURE EXECUTION.
+        with self.session_factory() as session:
+            action = session.scalar(select(ProposedAction).where(ProposedAction.id == action_id))
+            if action is None:
+                return False
+            action.approved = True
+            session.commit()
+            return True
+
+    def approve_all_actions(self, profile_id: int) -> int:
+        # MARKS ALL PROPOSED ACTIONS FOR A PROFILE AS APPROVED AND RETURNS THE COUNT.
+        with self.session_factory() as session:
+            actions = session.scalars(
+                select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
+            ).all()
+            count = 0
+            for action in actions:
+                action.approved = True
+                count += 1
+            session.commit()
+            return count
 
     def close(self) -> None:
         """RELEASES SQLITE HANDLES PROMPTLY."""
