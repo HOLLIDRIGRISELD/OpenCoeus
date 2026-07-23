@@ -400,17 +400,22 @@ class MainWindow(QMainWindow):
             QTreeWidget::item:hover {{ background: {COLORS["surface3"]}; }}
             QTreeWidget::branch {{ background: {COLORS["surface"]}; }}
             QHeaderView::section {{
-                background: {COLORS["surface2"]}; color: {COLORS["text2"]};
-                border: none; border-bottom: 1px solid {COLORS["border"]};
-                padding: 6px 10px; font-size: 11px; font-weight: bold;
+                background: {COLORS["surface"]}; color: {COLORS["text2"]};
+                border: none; border-bottom: 2px solid {COLORS["accent"]};
+                padding: 8px 12px; font-size: 11px; font-weight: bold;
             }}
             QTableWidget {{
                 background: {COLORS["surface"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 12px;
-                gridline-color: {COLORS["border"]}; font-size: 12px;
-                selection-background-color: {COLORS["accent2"]}; outline: none;
+                alternate-background-color: {COLORS["surface2"]};
+                border: none; border-radius: 12px;
+                padding: 4px; font-size: 12px; outline: none;
             }}
-            QTableWidget::item {{ padding: 6px 10px; border-radius: 8px; }}
+            QTableWidget::item {{ padding: 8px 12px; border: none; }}
+            QTableWidget::item:selected {{
+                background: rgba(56, 189, 248, 0.12);
+                border-left: 3px solid {COLORS["accent"]};
+            }}
+            QTableWidget::item:hover {{ background: {COLORS["surface3"]}; }}
             QListWidget {{
                 background: {COLORS["surface"]}; color: {COLORS["text"]};
                 border: 1px solid {COLORS["border"]}; border-radius: 12px;
@@ -781,6 +786,7 @@ class MainWindow(QMainWindow):
         table.setSelectionMode(select_mode)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(38)
         table.setShowGrid(False)
         table.setSortingEnabled(False)
         return table
