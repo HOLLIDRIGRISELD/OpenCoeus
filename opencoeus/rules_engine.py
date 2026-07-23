@@ -29,9 +29,15 @@ class RulesEngine:
     def evaluate(self, manifest_rows: list[ManifestRow], rules: list[dict]) -> list[RuleMatch]:
         # EVALUATES ALL ENABLED RULES AGAINST EVERY MANIFEST ROW AND COLLECTS MATCHES.
         sorted_rules = sorted(rules, key=lambda r: r.get("priority", 0))
+        profile_excluded = set(self.profile.excluded_folders) if self.profile else set()
+        profile_included = self.profile.included_folders if self.profile else []
         matches: list[RuleMatch] = []
         for row in manifest_rows:
             if row.status in {"duplicate", "unreadable"}:
+                continue
+            if profile_excluded and any(row.folder_path.startswith(ex) for ex in profile_excluded):
+                continue
+            if profile_included and not any(row.folder_path.startswith(inc) for inc in profile_included):
                 continue
             for rule in sorted_rules:
                 if not rule.get("enabled", True):

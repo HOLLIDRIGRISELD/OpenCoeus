@@ -1,24 +1,28 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QFileDialog, QFrame, QGraphicsDropShadowEffect,
-    QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QSizePolicy, QSpacerItem, QStatusBar, QTableWidget,
-    QTableWidgetItem, QTextEdit, QToolButton, QTreeWidget, QTreeWidgetItem,
-    QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog,
+    QFormLayout, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QListWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QScrollArea, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem,
+    QTextEdit, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QWidget,
 )
 
 from .config import ScanSettings
 from .database import AuditStore
 from .engine import ScanEngine, ScanResult, write_manifest
 from .folder_tree import FolderNode, build_folder_tree, set_folder_exclusion
-from .profiles import ProfileConfig, create_profile, list_profiles, load_profile_by_name
+from .profiles import (
+    ProfileConfig, create_profile, delete_profile, list_profiles,
+    load_profile_by_name, update_profile,
+)
 from .rules_engine import RulesEngine, RuleMatch
 
 
@@ -73,42 +77,25 @@ COLORS = {
 }
 
 
-def _icon_char(char: str) -> QPixmap:
-    px = QPixmap(32, 32)
-    px.fill(Qt.GlobalColor.transparent)
-    p = QPainter(px)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    font = QFont("Segoe UI", 16)
-    p.setFont(font)
-    p.setPen(QColor(COLORS["text"]))
-    p.drawText(QRect(0, 0, 32, 32), Qt.AlignmentFlag.AlignCenter, char)
-    p.end()
-    return px
-
-
-def _shadow(widget: QWidget, blur: int = 20, dy: int = 2, color: str = "#000000") -> None:
-    effect = QGraphicsDropShadowEffect(widget)
-    effect.setBlurRadius(blur)
-    effect.setOffset(0, dy)
-    effect.setColor(QColor(color))
-    widget.setGraphicsEffect(effect)
-
-
 class PhaseOneWorker(QThread):
     message = pyqtSignal(str)
     finished_tree = pyqtSignal(object, object)
     failed = pyqtSignal(str)
 
-    def __init__(self, selected_folder: Path, custom_patterns: list[str] | None = None) -> None:
+    def __init__(self, selected_folder: Path, profile: ProfileConfig) -> None:
         super().__init__()
         self.selected_folder = selected_folder
-        self.custom_patterns = custom_patterns
+        self.profile = profile
 
     def run(self) -> None:
         try:
+            merged_patterns = list(self.profile.custom_protected_patterns) if self.profile else []
             settings = ScanSettings(self.selected_folder)
             engine = ScanEngine(settings)
-            result = engine.run_phase_one(lambda msg: self.message.emit(str(msg)), self.custom_patterns)
+            result = engine.run_phase_one(
+                lambda msg: self.message.emit(str(msg)),
+                custom_patterns=merged_patterns or None,
+            )
             tree_root = build_folder_tree(self.selected_folder, settings.protected_patterns, max_depth=5)
             self.finished_tree.emit(result, tree_root)
         except Exception as exc:
@@ -130,9 +117,19 @@ class PhaseTwoWorker(QThread):
 
     def run(self) -> None:
         try:
+            all_excluded = set(self.excluded_folders)
+            if self.profile and self.profile.excluded_folders:
+                all_excluded.update(self.profile.excluded_folders)
+            included = self.profile.included_folders if self.profile and self.profile.included_folders else None
+            doc_extract = self.profile.document_extraction if self.profile else True
             settings = ScanSettings(self.selected_folder)
             engine = ScanEngine(settings)
-            scan_result = engine.run_phase_two(self.excluded_folders, lambda msg: self.message.emit(str(msg)))
+            scan_result = engine.run_phase_two(
+                all_excluded,
+                lambda msg: self.message.emit(str(msg)),
+                included_folders=included,
+                extract_documents=doc_extract,
+            )
             rules_engine = RulesEngine(self.profile)
             matches = rules_engine.evaluate(scan_result.rows, self.rules)
             self.finished_scan.emit(scan_result, matches)
@@ -141,27 +138,30 @@ class PhaseTwoWorker(QThread):
 
 
 class SidebarButton(QToolButton):
-    def __init__(self, icon_char: str, tooltip: str, parent: QWidget | None = None) -> None:
+    def __init__(self, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setCheckable(True)
-        self.setFixedSize(48, 48)
-        self.setToolTip(tooltip)
-        self.setIcon(QIcon(_icon_char(icon_char)))
-        self.setIconSize(QSize(22, 22))
-        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.setFixedHeight(40)
+        self.setText(label)
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.setAutoRaise(True)
         self.setStyleSheet(f"""
             QToolButton {{
                 border: none;
-                border-radius: 10px;
+                border-radius: 8px;
                 background: transparent;
-                padding: 0;
+                padding: 6px 12px;
+                text-align: left;
+                font-size: 13px;
+                color: {COLORS["text2"]};
             }}
             QToolButton:hover {{
                 background: {COLORS["surface3"]};
+                color: {COLORS["text"]};
             }}
             QToolButton:checked {{
                 background: {COLORS["accent2"]};
+                color: #ffffff;
             }}
         """)
 
@@ -169,9 +169,6 @@ class SidebarButton(QToolButton):
 class StatCard(QWidget):
     def __init__(self, title: str, value: str, accent: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._accent = accent
-        self._title_label = title
-        self._value_label = value
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(4)
@@ -195,6 +192,151 @@ class StatCard(QWidget):
 
     def set_value(self, value: str) -> None:
         self._val.setText(value)
+
+
+class ProfileEditDialog(QMainWindow):
+    saved = pyqtSignal()
+
+    def __init__(self, store: AuditStore, profile: ProfileConfig | None,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.profile = profile
+        self.is_new = profile is None
+        self.setWindowTitle("New Profile" if self.is_new else f"Edit: {profile.name}")
+        self.setMinimumSize(500, 480)
+        self.setModal(True)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        lay = QVBoxLayout(central)
+        lay.setContentsMargins(24, 24, 24, 24)
+        lay.setSpacing(16)
+
+        title = QLabel("New Profile" if self.is_new else "Edit Profile")
+        title.setStyleSheet(f"color: {COLORS['text']}; font-size: 20px; font-weight: bold;")
+        lay.addWidget(title)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("e.g. My Project")
+        if profile:
+            self.name_input.setText(profile.name)
+        form.addRow("Name:", self.name_input)
+
+        self.root_input = QLineEdit()
+        self.root_input.setPlaceholderText("Default scan root folder")
+        if profile and profile.root_path:
+            self.root_input.setText(profile.root_path)
+        form.addRow("Root path:", self.root_input)
+
+        self.included_input = QTextEdit()
+        self.included_input.setPlaceholderText("One folder path per line\nLeave empty to scan all folders")
+        self.included_input.setMaximumHeight(80)
+        if profile and profile.included_folders:
+            self.included_input.setPlainText("\n".join(profile.included_folders))
+        form.addRow("Include folders:", self.included_input)
+
+        self.excluded_input = QTextEdit()
+        self.excluded_input.setPlaceholderText("One folder path per line\nThese folders will be excluded from scanning")
+        self.excluded_input.setMaximumHeight(80)
+        if profile and profile.excluded_folders:
+            self.excluded_input.setPlainText("\n".join(profile.excluded_folders))
+        form.addRow("Exclude folders:", self.excluded_input)
+
+        self.patterns_input = QTextEdit()
+        self.patterns_input.setPlaceholderText("One regex pattern per line\nThese patterns add custom folder classifications")
+        self.patterns_input.setMaximumHeight(80)
+        if profile and profile.custom_protected_patterns:
+            self.patterns_input.setPlainText("\n".join(profile.custom_protected_patterns))
+        form.addRow("Custom patterns:", self.patterns_input)
+
+        self.extraction_check = QCheckBox("Extract text from PDF/DOCX files")
+        self.extraction_check.setChecked(
+            profile.document_extraction if profile else True
+        )
+        form.addRow("Document extraction:", self.extraction_check)
+
+        lay.addLayout(form)
+        lay.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedWidth(90)
+        cancel_btn.clicked.connect(self.close)
+        btn_row.addWidget(cancel_btn)
+        save_btn = QPushButton("Save")
+        save_btn.setFixedWidth(90)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{ background: {COLORS["accent2"]}; color: #fff; border: 1px solid {COLORS["accent"]}; font-weight: bold; }}
+            QPushButton:hover {{ background: {COLORS["accent"]}; }}
+        """)
+        save_btn.clicked.connect(self._save)
+        btn_row.addWidget(save_btn)
+        lay.addLayout(btn_row)
+
+        self._apply_dialog_style()
+
+    def _apply_dialog_style(self) -> None:
+        self.setStyleSheet(f"""
+            QMainWindow {{ background: {COLORS["bg"]}; }}
+            QLabel {{ color: {COLORS["text"]}; }}
+            QLineEdit {{
+                background: {COLORS["surface2"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 6px;
+                padding: 6px 10px; font-size: 13px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {COLORS["accent"]}; }}
+            QTextEdit {{
+                background: {COLORS["surface2"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 6px;
+                padding: 6px; font-size: 12px;
+            }}
+            QTextEdit:focus {{ border: 1px solid {COLORS["accent"]}; }}
+            QCheckBox {{
+                color: {COLORS["text"]}; font-size: 13px; spacing: 8px;
+            }}
+            QCheckBox::indicator {{
+                width: 16px; height: 16px;
+                border: 1px solid {COLORS["border"]}; border-radius: 3px;
+                background: {COLORS["surface2"]};
+            }}
+            QCheckBox::indicator:checked {{
+                background: {COLORS["accent2"]}; border-color: {COLORS["accent"]};
+            }}
+            QPushButton {{
+                background: {COLORS["surface3"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 6px;
+                padding: 6px 14px; font-size: 13px;
+            }}
+            QPushButton:hover {{ background: {COLORS["border"]}; }}
+        """)
+
+    def _parse_list(self, text: str) -> list[str]:
+        return [line.strip() for line in text.strip().splitlines() if line.strip()]
+
+    def _save(self) -> None:
+        name = self.name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Profile", "Name is required.")
+            return
+        kwargs = {
+            "name": name,
+            "root_path": self.root_input.text().strip(),
+            "included_folders": self._parse_list(self.included_input.toPlainText()),
+            "excluded_folders": self._parse_list(self.excluded_input.toPlainText()),
+            "custom_protected_patterns": self._parse_list(self.patterns_input.toPlainText()),
+            "document_extraction": self.extraction_check.isChecked(),
+        }
+        if self.is_new:
+            create_profile(self.store, **kwargs)
+        else:
+            update_profile(self.store, self.profile.profile_id, **kwargs)
+        self.saved.emit()
+        self.close()
 
 
 class MainWindow(QMainWindow):
@@ -221,9 +363,6 @@ class MainWindow(QMainWindow):
         self._load_profiles()
         self._switch_page(0)
 
-    # ------------------------------------------------------------------ #
-    #  GLOBAL STYLES                                                       #
-    # ------------------------------------------------------------------ #
     def _apply_global_style(self) -> None:
         self.setStyleSheet(f"""
             QMainWindow, QWidget#central {{
@@ -236,165 +375,80 @@ class MainWindow(QMainWindow):
                 font-size: 11px;
                 padding: 0 10px;
             }}
-            QLabel {{
-                color: {COLORS["text"]};
-            }}
+            QLabel {{ color: {COLORS["text"]}; }}
             QLineEdit {{
-                background: {COLORS["surface2"]};
-                color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-                padding: 8px 12px;
-                font-size: 13px;
+                background: {COLORS["surface2"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                padding: 8px 12px; font-size: 13px;
                 selection-background-color: {COLORS["accent2"]};
             }}
-            QLineEdit:focus {{
-                border: 1px solid {COLORS["accent"]};
-            }}
+            QLineEdit:focus {{ border: 1px solid {COLORS["accent"]}; }}
             QPushButton {{
-                background: {COLORS["surface3"]};
-                color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 13px;
-                font-weight: 500;
+                background: {COLORS["surface3"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                padding: 8px 16px; font-size: 13px; font-weight: 500;
             }}
-            QPushButton:hover {{
-                background: {COLORS["border"]};
-                border-color: {COLORS["border_light"]};
-            }}
-            QPushButton:pressed {{
-                background: {COLORS["accent2"]};
-                border-color: {COLORS["accent"]};
-            }}
+            QPushButton:hover {{ background: {COLORS["border"]}; border-color: {COLORS["border_light"]}; }}
+            QPushButton:pressed {{ background: {COLORS["accent2"]}; border-color: {COLORS["accent"]}; }}
             QPushButton:disabled {{
-                color: {COLORS["text3"]};
-                background: {COLORS["surface2"]};
-                border-color: {COLORS["surface3"]};
+                color: {COLORS["text3"]}; background: {COLORS["surface2"]}; border-color: {COLORS["surface3"]};
             }}
             QTreeWidget {{
-                background: {COLORS["surface"]};
-                color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-                padding: 4px;
-                font-size: 12px;
-                outline: none;
+                background: {COLORS["surface"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                padding: 4px; font-size: 12px; outline: none;
             }}
-            QTreeWidget::item {{
-                padding: 4px 6px;
-                border: none;
-                border-radius: 4px;
-            }}
-            QTreeWidget::item:selected {{
-                background: {COLORS["accent2"]};
-            }}
-            QTreeWidget::item:hover {{
-                background: {COLORS["surface3"]};
-            }}
-            QTreeWidget::branch {{
-                background: {COLORS["surface"]};
-            }}
+            QTreeWidget::item {{ padding: 4px 6px; border: none; border-radius: 4px; }}
+            QTreeWidget::item:selected {{ background: {COLORS["accent2"]}; }}
+            QTreeWidget::item:hover {{ background: {COLORS["surface3"]}; }}
+            QTreeWidget::branch {{ background: {COLORS["surface"]}; }}
             QHeaderView::section {{
-                background: {COLORS["surface2"]};
-                color: {COLORS["text2"]};
-                border: none;
-                border-bottom: 1px solid {COLORS["border"]};
-                padding: 6px 10px;
-                font-size: 11px;
-                font-weight: bold;
-                text-transform: uppercase;
+                background: {COLORS["surface2"]}; color: {COLORS["text2"]};
+                border: none; border-bottom: 1px solid {COLORS["border"]};
+                padding: 6px 10px; font-size: 11px; font-weight: bold;
             }}
             QTableWidget {{
-                background: {COLORS["surface"]};
-                color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-                gridline-color: {COLORS["border"]};
-                font-size: 12px;
-                selection-background-color: {COLORS["accent2"]};
-                outline: none;
+                background: {COLORS["surface"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                gridline-color: {COLORS["border"]}; font-size: 12px;
+                selection-background-color: {COLORS["accent2"]}; outline: none;
             }}
-            QTableWidget::item {{
-                padding: 6px 10px;
-            }}
+            QTableWidget::item {{ padding: 6px 10px; }}
             QListWidget {{
-                background: {COLORS["surface"]};
-                color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-                padding: 4px;
-                font-size: 12px;
-                outline: none;
+                background: {COLORS["surface"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                padding: 4px; font-size: 12px; outline: none;
             }}
-            QListWidget::item {{
-                padding: 6px 8px;
-                border-radius: 4px;
-            }}
-            QListWidget::item:selected {{
-                background: {COLORS["accent2"]};
-            }}
-            QListWidget::item:hover {{
-                background: {COLORS["surface3"]};
-            }}
+            QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
+            QListWidget::item:selected {{ background: {COLORS["accent2"]}; }}
+            QListWidget::item:hover {{ background: {COLORS["surface3"]}; }}
             QTextEdit {{
-                background: {COLORS["surface"]};
-                color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]};
-                border-radius: 8px;
-                padding: 8px;
-                font-family: 'Cascadia Code', 'Consolas', monospace;
-                font-size: 11px;
-                selection-background-color: {COLORS["accent2"]};
+                background: {COLORS["surface"]}; color: {COLORS["text"]};
+                border: 1px solid {COLORS["border"]}; border-radius: 8px;
+                padding: 8px; font-family: 'Cascadia Code', 'Consolas', monospace;
+                font-size: 11px; selection-background-color: {COLORS["accent2"]};
             }}
-            QScrollArea {{
-                border: none;
-                background: transparent;
-            }}
+            QScrollArea {{ border: none; background: transparent; }}
             QScrollBar:vertical {{
-                background: {COLORS["surface"]};
-                width: 8px;
-                border: none;
+                background: {COLORS["surface"]}; width: 8px; border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: {COLORS["border"]};
-                border-radius: 4px;
-                min-height: 30px;
+                background: {COLORS["border"]}; border-radius: 4px; min-height: 30px;
             }}
-            QScrollBar::handle:vertical:hover {{
-                background: {COLORS["text3"]};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
-            QScrollBar:horizontal {{
-                height: 8px;
-            }}
+            QScrollBar::handle:vertical:hover {{ background: {COLORS["text3"]}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar:horizontal {{ height: 8px; }}
             QScrollBar::handle:horizontal {{
-                background: {COLORS["border"]};
-                border-radius: 4px;
-                min-width: 30px;
+                background: {COLORS["border"]}; border-radius: 4px; min-width: 30px;
             }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                width: 0;
-            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
             QProgressBar {{
-                background: {COLORS["surface2"]};
-                border: none;
-                border-radius: 2px;
-                max-height: 3px;
-                min-height: 3px;
+                background: {COLORS["surface2"]}; border: none;
+                border-radius: 2px; max-height: 3px; min-height: 3px;
             }}
-            QProgressBar::chunk {{
-                background: {COLORS["accent"]};
-                border-radius: 2px;
-            }}
+            QProgressBar::chunk {{ background: {COLORS["accent"]}; border-radius: 2px; }}
         """)
 
-    # ------------------------------------------------------------------ #
-    #  UI BUILD                                                            #
-    # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
         central = QWidget()
         central.setObjectName("central")
@@ -403,9 +457,9 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ---- SIDEBAR (icon rail) ----
+        # ---- SIDEBAR (text nav) ----
         sidebar = QWidget()
-        sidebar.setFixedWidth(60)
+        sidebar.setFixedWidth(150)
         sidebar.setStyleSheet(f"""
             QWidget {{
                 background: {COLORS["sidebar_bg"]};
@@ -413,22 +467,19 @@ class MainWindow(QMainWindow):
             }}
         """)
         sb_layout = QVBoxLayout(sidebar)
-        sb_layout.setContentsMargins(0, 12, 0, 12)
+        sb_layout.setContentsMargins(8, 16, 8, 16)
         sb_layout.setSpacing(4)
 
-        app_icon = QLabel("O")
-        app_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        app_icon.setFixedHeight(40)
-        app_icon.setStyleSheet(f"color: {COLORS['accent']}; font-size: 22px; font-weight: bold; border: none;")
-        sb_layout.addWidget(app_icon)
+        app_label = QLabel("OpenCoeus")
+        app_label.setStyleSheet(f"color: {COLORS['accent']}; font-size: 15px; font-weight: bold; border: none; padding: 4px 8px;")
+        sb_layout.addWidget(app_label)
 
         nav_group = QButtonGroup(self)
         nav_group.setExclusive(True)
-        nav_icons = ["H", "T", "R", "A", "L"]
-        nav_tips  = ["Home", "Folders", "Results", "Actions", "Log"]
+        nav_labels = ["Home", "Folders", "Results", "Actions", "Log"]
 
-        for i, (ic, tip) in enumerate(zip(nav_icons, nav_tips)):
-            btn = SidebarButton(ic, tip)
+        for i, label in enumerate(nav_labels):
+            btn = SidebarButton(label)
             nav_group.addButton(btn, i)
             self._nav_buttons.append(btn)
             sb_layout.addWidget(btn)
@@ -443,7 +494,6 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
 
-        # Top header bar (stays across all pages).
         self._build_header(content_layout)
 
         self.progress_bar = QProgressBar()
@@ -452,7 +502,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.hide()
         content_layout.addWidget(self.progress_bar)
 
-        # Page stack.
         self._page_container = QWidget()
         self._page_stack = QVBoxLayout(self._page_container)
         self._page_stack.setContentsMargins(0, 0, 0, 0)
@@ -471,10 +520,8 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self._page_container, 1)
         root.addWidget(content, 1)
 
-        # Wire nav buttons.
         nav_group.idClicked.connect(self._switch_page)
 
-        # Status bar.
         self._status = QStatusBar()
         self.setStatusBar(self._status)
         self._status.showMessage("Ready")
@@ -506,10 +553,8 @@ class MainWindow(QMainWindow):
         self.phase_one_button.setFixedWidth(100)
         self.phase_one_button.setStyleSheet(f"""
             QPushButton {{
-                background: {COLORS["accent2"]};
-                color: #ffffff;
-                border: 1px solid {COLORS["accent"]};
-                font-weight: bold;
+                background: {COLORS["accent2"]}; color: #ffffff;
+                border: 1px solid {COLORS["accent"]}; font-weight: bold;
             }}
             QPushButton:hover {{ background: {COLORS["accent"]}; }}
             QPushButton:disabled {{ background: {COLORS["surface3"]}; color: {COLORS["text3"]}; border-color: {COLORS["surface3"]}; }}
@@ -522,10 +567,8 @@ class MainWindow(QMainWindow):
         self.phase_two_button.setEnabled(False)
         self.phase_two_button.setStyleSheet(f"""
             QPushButton {{
-                background: {COLORS["green"]};
-                color: #000000;
-                border: 1px solid {COLORS["green"]};
-                font-weight: bold;
+                background: {COLORS["green"]}; color: #000000;
+                border: 1px solid {COLORS["green"]}; font-weight: bold;
             }}
             QPushButton:hover {{ background: #47cc5a; }}
             QPushButton:disabled {{ background: {COLORS["surface3"]}; color: {COLORS["text3"]}; border-color: {COLORS["surface3"]}; }}
@@ -540,16 +583,6 @@ class MainWindow(QMainWindow):
         hlay.addWidget(self.export_button)
 
         parent_layout.addWidget(header)
-
-    # ------------------------------------------------------------------ #
-    #  PAGE BUILDERS                                                       #
-    # ------------------------------------------------------------------ #
-    def _make_page_wrapper(self, inner: QWidget) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(inner)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        return scroll
 
     def _section_title(self, text: str) -> QLabel:
         lbl = QLabel(text)
@@ -576,7 +609,6 @@ class MainWindow(QMainWindow):
         subtitle = self._section_sub("Data Lifecycle Management — scan, classify, and organize your files.")
         lay.addWidget(subtitle)
 
-        # Stats cards.
         self.stat_cards = QGridLayout()
         self.stat_cards.setSpacing(12)
         self.card_folders = StatCard("Folders", "—", COLORS["accent"])
@@ -589,7 +621,6 @@ class MainWindow(QMainWindow):
         self.stat_cards.addWidget(self.card_actions, 0, 3)
         lay.addLayout(self.stat_cards)
 
-        # Profiles section.
         profile_header = QHBoxLayout()
         profile_header.setSpacing(8)
         profile_header.addWidget(self._section_title("Profiles"))
@@ -597,6 +628,18 @@ class MainWindow(QMainWindow):
         add_profile_btn.setFixedWidth(70)
         add_profile_btn.clicked.connect(self._create_new_profile)
         profile_header.addWidget(add_profile_btn)
+        edit_profile_btn = QPushButton("Edit")
+        edit_profile_btn.setFixedWidth(60)
+        edit_profile_btn.clicked.connect(self._edit_selected_profile)
+        profile_header.addWidget(edit_profile_btn)
+        delete_profile_btn = QPushButton("Delete")
+        delete_profile_btn.setFixedWidth(70)
+        delete_profile_btn.setStyleSheet(f"""
+            QPushButton {{ color: {COLORS["red"]}; border-color: {COLORS["red"]}; }}
+            QPushButton:hover {{ background: {COLORS["red"]}; color: #fff; }}
+        """)
+        delete_profile_btn.clicked.connect(self._delete_selected_profile)
+        profile_header.addWidget(delete_profile_btn)
         profile_header.addStretch()
         lay.addLayout(profile_header)
 
@@ -717,9 +760,6 @@ class MainWindow(QMainWindow):
 
         return page
 
-    # ------------------------------------------------------------------ #
-    #  TABLE HELPER                                                        #
-    # ------------------------------------------------------------------ #
     def _make_table(
         self,
         headers: list[str],
@@ -742,14 +782,13 @@ class MainWindow(QMainWindow):
     #  PAGE NAVIGATION                                                     #
     # ------------------------------------------------------------------ #
     def _switch_page(self, index: int) -> None:
+        if index < 0 or index >= len(self._pages):
+            return
         for i, page in enumerate(self._pages):
             page.setVisible(i == index)
         if index < len(self._nav_buttons):
             self._nav_buttons[index].setChecked(True)
 
-    # ------------------------------------------------------------------ #
-    #  FOLDER CHOOSER                                                      #
-    # ------------------------------------------------------------------ #
     def _choose_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select folder")
         if folder:
@@ -763,6 +802,7 @@ class MainWindow(QMainWindow):
         if not folder.is_dir():
             QMessageBox.warning(self, "OpenCoeus", "Select a readable folder first.")
             return
+        self._cleanup_workers()
         self.audit_log.clear()
         self.results_table.setRowCount(0)
         self.actions_table.setRowCount(0)
@@ -772,7 +812,8 @@ class MainWindow(QMainWindow):
         self.phase_two_button.setEnabled(False)
         self.progress_bar.show()
         self._status.showMessage("Discovering folders...")
-        self.phase_one_worker = PhaseOneWorker(folder)
+        profile = self.current_profile or ProfileConfig()
+        self.phase_one_worker = PhaseOneWorker(folder, profile)
         self.phase_one_worker.message.connect(self._on_log_message)
         self.phase_one_worker.finished_tree.connect(self._phase_one_done)
         self.phase_one_worker.failed.connect(self._scan_failed)
@@ -802,6 +843,7 @@ class MainWindow(QMainWindow):
         folder = Path(self.folder_path_input.text())
         if not folder.is_dir():
             return
+        self._cleanup_workers()
         self.phase_two_button.setEnabled(False)
         self.phase_one_button.setEnabled(False)
         self.progress_bar.show()
@@ -815,7 +857,7 @@ class MainWindow(QMainWindow):
 
     def _phase_two_done(self, scan_result: ScanResult, matches: list[RuleMatch]) -> None:
         self.scan_result = scan_result
-        self.proposed_matches = matches
+        self.proposed_matches = list(matches)
         self.progress_bar.hide()
         self.phase_one_button.setEnabled(True)
         self.phase_two_button.setEnabled(True)
@@ -851,6 +893,18 @@ class MainWindow(QMainWindow):
             self._on_log_message(f"Manifest saved: {path}")
 
     # ------------------------------------------------------------------ #
+    #  THREAD CLEANUP                                                      #
+    # ------------------------------------------------------------------ #
+    def _cleanup_workers(self) -> None:
+        for worker in (self.phase_one_worker, self.phase_two_worker):
+            if worker and worker.isRunning():
+                worker.blockSignals(True)
+                worker.quit()
+                worker.wait(2000)
+        self.phase_one_worker = None
+        self.phase_two_worker = None
+
+    # ------------------------------------------------------------------ #
     #  ACTIONS TABLE CONTROLS                                              #
     # ------------------------------------------------------------------ #
     def _approve_selected(self) -> None:
@@ -871,12 +925,21 @@ class MainWindow(QMainWindow):
         self._refresh_actions_count()
 
     def _reject_selected(self) -> None:
-        rows = sorted({idx.row() for idx in self.actions_table.selectedIndexes()}, reverse=True)
-        for r in rows:
+        rows_to_remove = sorted({idx.row() for idx in self.actions_table.selectedIndexes()}, reverse=True)
+        for r in rows_to_remove:
             self.actions_table.removeRow(r)
-            if r < len(self.proposed_matches):
-                self.proposed_matches.pop(r)
+        self._sync_proposed_matches_from_table()
         self._refresh_actions_count()
+
+    def _sync_proposed_matches_from_table(self) -> None:
+        remaining: list[RuleMatch] = []
+        for r in range(self.actions_table.rowCount()):
+            status_item = self.actions_table.item(r, 0)
+            if status_item and status_item.text() == "APPROVED":
+                continue
+            if r < len(self.proposed_matches):
+                remaining.append(self.proposed_matches[r])
+        self.proposed_matches = remaining
 
     def _refresh_actions_count(self) -> None:
         approved = sum(
@@ -891,17 +954,47 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _load_profiles(self) -> None:
         self.profile_list.clear()
-        for p in list_profiles(self.store):
+        profiles = list_profiles(self.store)
+        for p in profiles:
             self.profile_list.addItem(p.name)
+        if self.profile_list.count() > 0:
+            self.profile_list.setCurrentRow(0)
 
     def _on_profile_selected(self, current, _prev) -> None:
-        self.current_profile = load_profile_by_name(self.store, current.text()) if current else None
+        if not current:
+            self.current_profile = None
+            return
+        self.current_profile = load_profile_by_name(self.store, current.text())
+        if self.current_profile and self.current_profile.root_path:
+            current_root = self.folder_path_input.text().strip()
+            if not current_root:
+                self.folder_path_input.setText(self.current_profile.root_path)
 
     def _create_new_profile(self) -> None:
-        from PyQt6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "New profile", "Profile name:")
-        if ok and name.strip():
-            create_profile(self.store, name.strip())
+        dialog = ProfileEditDialog(self.store, None, self)
+        dialog.saved.connect(self._load_profiles)
+        dialog.show()
+
+    def _edit_selected_profile(self) -> None:
+        if not self.current_profile:
+            QMessageBox.information(self, "Profile", "Select a profile to edit.")
+            return
+        dialog = ProfileEditDialog(self.store, self.current_profile, self)
+        dialog.saved.connect(self._load_profiles)
+        dialog.show()
+
+    def _delete_selected_profile(self) -> None:
+        if not self.current_profile:
+            QMessageBox.information(self, "Profile", "Select a profile to delete.")
+            return
+        confirm = QMessageBox.question(
+            self, "Delete Profile",
+            f"Delete profile '{self.current_profile.name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            delete_profile(self.store, self.current_profile.profile_id)
+            self.current_profile = None
             self._load_profiles()
 
     # ------------------------------------------------------------------ #
@@ -949,10 +1042,44 @@ class MainWindow(QMainWindow):
         if checked:
             self.excluded_folders.discard(path_str)
             set_folder_exclusion(self.folder_tree_root, Path(path_str), excluded=False)
+            self._set_children_check_state(item, Qt.CheckState.Checked)
         else:
             self.excluded_folders.add(path_str)
             set_folder_exclusion(self.folder_tree_root, Path(path_str), excluded=True)
+            self._set_children_check_state(item, Qt.CheckState.Unchecked)
+        self._update_parent_check_state(item)
         self.folder_tree.blockSignals(False)
+
+    def _set_children_check_state(self, parent: QTreeWidgetItem, state: Qt.CheckState) -> None:
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            child_path = child.data(0, Qt.ItemDataRole.UserRole)
+            child.setCheckState(0, state)
+            if child_path:
+                if state == Qt.CheckState.Unchecked:
+                    self.excluded_folders.add(child_path)
+                    set_folder_exclusion(self.folder_tree_root, Path(child_path), excluded=True)
+                else:
+                    self.excluded_folders.discard(child_path)
+                    set_folder_exclusion(self.folder_tree_root, Path(child_path), excluded=False)
+            self._set_children_check_state(child, state)
+
+    def _update_parent_check_state(self, item: QTreeWidgetItem) -> None:
+        parent = item.parent()
+        if parent is None:
+            return
+        all_checked = all(
+            parent.child(i).checkState(0) == Qt.CheckState.Checked
+            for i in range(parent.childCount())
+        )
+        parent_path = parent.data(0, Qt.ItemDataRole.UserRole)
+        if all_checked:
+            parent.setCheckState(0, Qt.CheckState.Checked)
+            if parent_path:
+                self.excluded_folders.discard(parent_path)
+        else:
+            parent.setCheckState(0, Qt.CheckState.PartiallyChecked)
+        self._update_parent_check_state(parent)
 
     # ------------------------------------------------------------------ #
     #  POPULATE TABLES                                                     #

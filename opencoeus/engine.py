@@ -58,9 +58,10 @@ class ScanEngine:
                       custom_patterns: list[str] | None = None) -> ScanResult:
         # PHASE 1: DISCOVERS THE FOLDER TREE AND CLASSIFIES EVERY FOLDER.
         scan_result = ScanResult()
+        merged_patterns = self.settings.protected_patterns + (custom_patterns or [])
         folder_tree_root = build_folder_tree(
             self.settings.root,
-            self.settings.protected_patterns,
+            merged_patterns,
             progress_callback=progress_callback,
         )
         scan_result.classifications = classify_tree(folder_tree_root, custom_patterns)
@@ -69,18 +70,26 @@ class ScanEngine:
         return scan_result
 
     def run_phase_two(self, excluded_folders: set[str] | None = None,
-                      progress_callback: Callable[[str], None] | None = None) -> ScanResult:
+                      progress_callback: Callable[[str], None] | None = None,
+                      included_folders: list[str] | None = None,
+                      extract_documents: bool | None = None) -> ScanResult:
         # PHASE 2: SCANS FILES WITHIN NON-EXCLUDED FOLDERS AND DETECTS DUPLICATES.
         scan_result = ScanResult()
-        self._scan_files(scan_result, progress_callback, excluded_folders)
+        effective_extract = extract_documents if extract_documents is not None else self.settings.extract_documents
+        self._scan_files(scan_result, progress_callback, excluded_folders, included_folders, effective_extract)
         return scan_result
 
     def _scan_files(self, scan_result: ScanResult, progress_callback: Callable[[str], None] | None = None,
-                    excluded_folders: set[str] | None = None) -> None:
+                    excluded_folders: set[str] | None = None,
+                    included_folders: list[str] | None = None,
+                    extract_documents: bool | None = None) -> None:
         # SHARED FILE SCANNING LOGIC USED BY BOTH run() AND run_phase_two().
         discovered_files: list[FileRecord] = list(iter_files(self.settings.root, scan_result.errors.append))
         if excluded_folders:
             discovered_files = [f for f in discovered_files if not self._is_in_excluded_folder(f, excluded_folders)]
+        if included_folders:
+            discovered_files = [f for f in discovered_files if self._is_in_included_folder(f, included_folders)]
+        use_extraction = extract_documents if extract_documents is not None else self.settings.extract_documents
         files_grouped_by_size: dict[int, list[FileRecord]] = defaultdict(list)
         for file_record in discovered_files:
             files_grouped_by_size[file_record.size].append(file_record)
@@ -103,7 +112,7 @@ class ScanEngine:
                     file_status = "unreadable"
                     scan_result.errors.append(f"Cannot hash {file_record.path}: {file_error}")
             suggested_title = ""
-            if self.settings.extract_documents and file_status in {"unique", "protected"} and file_record.path.suffix.lower() in {".pdf", ".docx"}:
+            if use_extraction and file_status in {"unique", "protected"} and file_record.path.suffix.lower() in {".pdf", ".docx"}:
                 suggested_title = suggest_title(extract_text(file_record.path), file_record.path.stem)
                 suggested_title = self.store.reserve_title(suggested_title, str(file_record.path))
             self.store.record_file(str(file_record.path), file_record.size, file_hash or None, file_status)
@@ -124,6 +133,13 @@ class ScanEngine:
         # CHECKS WHETHER A FILE'S FOLDER PATH MATCHES ANY EXCLUDED FOLDER.
         for excluded_folder in excluded_folders:
             if file_record.folder_path.startswith(excluded_folder):
+                return True
+        return False
+
+    def _is_in_included_folder(self, file_record: FileRecord, included_folders: list[str]) -> bool:
+        # CHECKS WHETHER A FILE'S FOLDER PATH MATCHES ANY INCLUDED FOLDER.
+        for included_folder in included_folders:
+            if file_record.folder_path.startswith(included_folder):
                 return True
         return False
 
