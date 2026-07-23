@@ -138,6 +138,67 @@ class PhaseTwoWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class RuleEditDialog(QDialog):
+    def __init__(self, parent=None, rule: dict | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Edit Rule" if rule else "Add Rule")
+        self.setMinimumWidth(450)
+        self.rule = rule or {}
+
+        layout = QFormLayout(self)
+        layout.setSpacing(10)
+
+        self.name_input = QLineEdit(self.rule.get("name", ""))
+        self.name_input.setPlaceholderText("Rule name")
+        layout.addRow("Name:", self.name_input)
+
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["extension", "pattern", "date", "size", "folder"])
+        idx = self.type_combo.findText(self.rule.get("rule_type", "extension"))
+        if idx >= 0:
+            self.type_combo.setCurrentIndex(idx)
+        layout.addRow("Type:", self.type_combo)
+
+        self.priority_input = QLineEdit(str(self.rule.get("priority", 10)))
+        self.priority_input.setPlaceholderText("10")
+        layout.addRow("Priority:", self.priority_input)
+
+        self.template_input = QLineEdit(self.rule.get("destination_template", ""))
+        self.template_input.setPlaceholderText("{folder}/Documents/{filename}")
+        layout.addRow("Destination:", self.template_input)
+
+        self.config_input = QLineEdit(self.rule.get("rule_config", "{}"))
+        self.config_input.setPlaceholderText('{"extensions": [".pdf", ".docx"]}')
+        layout.addRow("Config (JSON):", self.config_input)
+
+        self.enabled_check = QCheckBox("Enabled")
+        self.enabled_check.setChecked(self.rule.get("enabled", True))
+        layout.addRow("", self.enabled_check)
+
+        buttons = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(cancel_btn)
+        save_btn = QPushButton("Save")
+        save_btn.setStyleSheet(f"""
+            QPushButton {{ background: {COLORS["accent"]}; color: #000; border: 1px solid {COLORS["accent"]}; }}
+            QPushButton:hover {{ background: {COLORS["accent2"]}; }}
+        """)
+        save_btn.clicked.connect(self.accept)
+        buttons.addWidget(save_btn)
+        layout.addRow(buttons)
+
+    def get_data(self) -> dict:
+        return {
+            "name": self.name_input.text(),
+            "rule_type": self.type_combo.currentText(),
+            "priority": int(self.priority_input.text() or "10"),
+            "destination_template": self.template_input.text(),
+            "rule_config": self.config_input.text(),
+            "enabled": self.enabled_check.isChecked(),
+        }
+
+
 class SidebarButton(QToolButton):
     def __init__(self, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -363,6 +424,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._apply_global_style()
+        self._refresh_rules_table()
         self._load_profiles()
         self._switch_page(0)
 
@@ -483,7 +545,7 @@ class MainWindow(QMainWindow):
 
         nav_group = QButtonGroup(self)
         nav_group.setExclusive(True)
-        nav_labels = ["Home", "Folders", "Results", "Actions", "Log"]
+        nav_labels = ["Home", "Folders", "Results", "Actions", "Rules", "Log"]
 
         for i, label in enumerate(nav_labels):
             btn = SidebarButton(label)
@@ -519,6 +581,7 @@ class MainWindow(QMainWindow):
             self._build_folders_page(),
             self._build_results_page(),
             self._build_actions_page(),
+            self._build_rules_page(),
             self._build_log_page(),
         ]
         for page in self._pages:
@@ -693,13 +756,126 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._section_title("Scan Results"))
         lay.addWidget(self._section_sub("Files discovered during the scan phase."))
 
+        # FILTER BAR.
+        filter_bar = QHBoxLayout()
+        filter_bar.setSpacing(8)
+        self.results_filter_combo = QComboBox()
+        self.results_filter_combo.addItems(["All", "Duplicates", "Duplicate Groups", "Protected", "Unique", "Unreadable", "With Title"])
+        self.results_filter_combo.setFixedWidth(140)
+        self.results_filter_combo.currentIndexChanged.connect(self._filter_results)
+        filter_bar.addWidget(self.results_filter_combo)
+        self.results_search_input = QLineEdit()
+        self.results_search_input.setPlaceholderText("Search files...")
+        self.results_search_input.textChanged.connect(self._filter_results)
+        filter_bar.addWidget(self.results_search_input, 1)
+        lay.addLayout(filter_bar)
+
         self.results_table = self._make_table(
             ["Path", "Size", "Status", "Duplicate of", "Title", "Ext", "Folder"],
             stretch_column=0,
         )
         lay.addWidget(self._make_container(self.results_table), 1)
 
+        # ERROR DISPLAY (HIDDEN BY DEFAULT, SHOWN IF ERRORS EXIST).
+        self.error_section = QWidget()
+        error_lay = QVBoxLayout(self.error_section)
+        error_lay.setContentsMargins(0, 0, 0, 0)
+        error_lay.setSpacing(6)
+        error_header = QHBoxLayout()
+        self.error_count_label = QLabel("Warnings")
+        self.error_count_label.setStyleSheet(f"color: {COLORS['yellow']}; font-weight: bold; font-size: 12px;")
+        error_header.addWidget(self.error_count_label)
+        error_header.addStretch()
+        self.error_section.setLayout(error_lay)
+        self.error_section.hide()
+        lay.addWidget(self.error_section)
+
+        self.error_text = QTextEdit()
+        self.error_text.setReadOnly(True)
+        self.error_text.setMaximumHeight(100)
+        self.error_text.setStyleSheet(f"""
+            QTextEdit {{ background: {COLORS["surface2"]}; color: {COLORS["yellow"]};
+                border: 1px solid {COLORS["yellow"]}; border-radius: 8px;
+                font-size: 11px; padding: 6px; }}
+        """)
+        error_lay.addWidget(self.error_text)
+        error_lay.addLayout(error_header)
+
         return page
+
+    def _show_scan_errors(self, errors: list[str]) -> None:
+        if errors:
+            self.error_section.show()
+            self.error_count_label.setText(f"Warnings ({len(errors)})")
+            self.error_text.setText("\n".join(errors))
+        else:
+            self.error_section.hide()
+
+    def _filter_results(self) -> None:
+        # FILTERS RESULTS TABLE ROWS BASED ON COMBO SELECTION AND SEARCH TEXT.
+        filter_text = self.results_search_input.text().lower()
+        filter_status = self.results_filter_combo.currentText().lower()
+        if filter_status == "duplicate groups":
+            # SHOW ONLY DUPLICATES, SORTED BY ORIGINAL FILE FOR GROUPING.
+            self._show_duplicate_groups(filter_text)
+            return
+        for r in range(self.results_table.rowCount()):
+            show = True
+            status_item = self.results_table.item(r, 2)
+            title_item = self.results_table.item(r, 4)
+            path_item = self.results_table.item(r, 0)
+            status_text = status_item.text().lower() if status_item else ""
+            title_text = title_item.text().lower() if title_item else ""
+            path_text = path_item.toolTip().lower() if path_item and path_item.toolTip() else (path_item.text().lower() if path_item else "")
+            # STATUS FILTER.
+            if filter_status == "duplicates" and status_text != "duplicate":
+                show = False
+            elif filter_status == "protected" and status_text != "protected":
+                show = False
+            elif filter_status == "unique" and status_text != "unique":
+                show = False
+            elif filter_status == "unreadable" and status_text != "unreadable":
+                show = False
+            elif filter_status == "with title" and not title_text:
+                show = False
+            # SEARCH FILTER.
+            if show and filter_text:
+                if filter_text not in path_text and filter_text not in title_text:
+                    show = False
+            self.results_table.setRowHidden(r, not show)
+
+    def _show_duplicate_groups(self, search_text: str) -> None:
+        # SHOWS DUPLICATES GROUPED BY ORIGINAL FILE WITH VISUAL SEPARATION.
+        t = self.results_table
+        # COLLECT DUPLICATE ROWS AND GROUP BY ORIGINAL PATH.
+        groups: dict[str, list[int]] = {}
+        all_rows: list[tuple[int, str, str, str]] = []
+        for r in range(t.rowCount()):
+            status_item = t.item(r, 2)
+            if not status_item or status_item.text() != "DUPLICATE":
+                continue
+            dup_item = t.item(r, 3)
+            orig_path = dup_item.toolTip() if dup_item and dup_item.toolTip() else (dup_item.text() if dup_item else "")
+            path_item = t.item(r, 0)
+            path_text = path_item.toolTip() if path_item and path_item.toolTip() else (path_item.text() if path_item else "")
+            title_item = t.item(r, 4)
+            title_text = title_item.text() if title_item else ""
+            if search_text and search_text not in path_text and search_text not in title_text:
+                continue
+            groups.setdefault(orig_path, []).append(r)
+            all_rows.append((r, orig_path, path_text, title_text))
+        # SORT BY ORIGINAL PATH SO GROUPS ARE TOGETHER.
+        sorted_rows = sorted(all_rows, key=lambda x: x[1])
+        # HIDE ALL, THEN SHOW GROUPED ROWS IN ORDER.
+        for r in range(t.rowCount()):
+            t.setRowHidden(r, True)
+        display_row = 0
+        group_index = 0
+        for orig_path, _ in groups.items():
+            for r, _, _, _ in sorted_rows:
+                if all_rows[r][1] == orig_path:
+                    t.setRowHidden(r, False)
+                    group_index += 1
 
     # -- ACTIONS PAGE ----------------------------------------------------- #
     def _build_actions_page(self) -> QWidget:
@@ -756,6 +932,103 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._make_container(self.actions_table), 1)
 
         return page
+
+    # -- RULES PAGE ------------------------------------------------------- #
+    def _build_rules_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 24, 32, 24)
+        lay.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        header.addWidget(self._section_title("Organization Rules"))
+        header.addStretch()
+
+        add_rule_btn = QPushButton("+ Add Rule")
+        add_rule_btn.clicked.connect(self._add_rule)
+        header.addWidget(add_rule_btn)
+        edit_rule_btn = QPushButton("Edit")
+        edit_rule_btn.setFixedWidth(60)
+        edit_rule_btn.clicked.connect(self._edit_rule)
+        header.addWidget(edit_rule_btn)
+        toggle_rule_btn = QPushButton("Enable/Disable")
+        toggle_rule_btn.clicked.connect(self._toggle_rule)
+        header.addWidget(toggle_rule_btn)
+        delete_rule_btn = QPushButton("Delete")
+        delete_rule_btn.setFixedWidth(70)
+        delete_rule_btn.setStyleSheet(f"""
+            QPushButton {{ color: {COLORS["red"]}; border-color: {COLORS["red"]}; }}
+            QPushButton:hover {{ background: {COLORS["red"]}; color: #fff; }}
+        """)
+        delete_rule_btn.clicked.connect(self._delete_rule)
+        header.addWidget(delete_rule_btn)
+        lay.addLayout(header)
+
+        self.rules_table = self._make_table(
+            ["Name", "Type", "Priority", "Enabled", "Destination", "Config"],
+            stretch_column=4,
+        )
+        lay.addWidget(self._make_container(self.rules_table), 1)
+        return page
+
+    def _refresh_rules_table(self) -> None:
+        t = self.rules_table
+        t.setUpdatesEnabled(False)
+        t.blockSignals(True)
+        try:
+            t.setRowCount(len(self.active_rules))
+            for i, rule in enumerate(self.active_rules):
+                t.setItem(i, 0, QTableWidgetItem(rule.get("name", "")))
+                t.setItem(i, 1, QTableWidgetItem(rule.get("rule_type", "")))
+                t.setItem(i, 2, QTableWidgetItem(str(rule.get("priority", 0))))
+                enabled_item = QTableWidgetItem("Yes" if rule.get("enabled", True) else "No")
+                enabled_item.setForeground(QColor(COLORS["green"] if rule.get("enabled", True) else COLORS["text3"]))
+                t.setItem(i, 3, enabled_item)
+                t.setItem(i, 4, QTableWidgetItem(rule.get("destination_template", "")))
+                t.setItem(i, 5, QTableWidgetItem(rule.get("rule_config", "{}")))
+        finally:
+            t.blockSignals(False)
+            t.setUpdatesEnabled(True)
+
+    def _add_rule(self) -> None:
+        dialog = RuleEditDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_data()
+            new_id = max((r.get("id", 0) for r in self.active_rules), default=0) + 1
+            data["id"] = new_id
+            self.active_rules.append(data)
+            self._refresh_rules_table()
+
+    def _edit_rule(self) -> None:
+        rows = {idx.row() for idx in self.rules_table.selectedIndexes()}
+        if not rows:
+            return
+        row = min(rows)
+        if row >= len(self.active_rules):
+            return
+        rule = self.active_rules[row]
+        dialog = RuleEditDialog(self, rule)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_data()
+            data["id"] = rule.get("id")
+            self.active_rules[row] = data
+            self._refresh_rules_table()
+
+    def _toggle_rule(self) -> None:
+        rows = {idx.row() for idx in self.rules_table.selectedIndexes()}
+        for r in rows:
+            if r < len(self.active_rules):
+                rule = self.active_rules[r]
+                rule["enabled"] = not rule.get("enabled", True)
+        self._refresh_rules_table()
+
+    def _delete_rule(self) -> None:
+        rows = sorted({idx.row() for idx in self.rules_table.selectedIndexes()}, reverse=True)
+        for r in rows:
+            if r < len(self.active_rules):
+                del self.active_rules[r]
+        self._refresh_rules_table()
 
     # -- LOG PAGE --------------------------------------------------------- #
     def _build_log_page(self) -> QWidget:
@@ -917,6 +1190,7 @@ class MainWindow(QMainWindow):
         self._action_id_map = {a.original_path: a.id for a in saved_actions}
         self._fill_results_table(scan_result)
         self._fill_actions_table(matches)
+        self._show_scan_errors(scan_result.errors)
         self._switch_page(2)
 
         dup = scan_result.duplicate_count
