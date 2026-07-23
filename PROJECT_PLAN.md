@@ -23,10 +23,10 @@ It must never reorganise an entire drive as one flat collection. Applications, g
 
 - Default mode is scan and preview only: no rename, move, merge, or deletion.
 - System and OpenCoeus application-data folders are protected with platform-aware rules.
-- Future drive scans will present a selectable folder tree and recommended exclusions.
-- Application, game, dependency, and source-code folders will be excluded by default when recognised.
-- Organisation will retain each selected folder's structure unless the user explicitly approves a destination rule.
-- Every future file change requires a preview, explicit approval, persistent audit record, and undo journal.
+- Folder scans present a selectable folder tree with recommended exclusions.
+- Application, game, dependency, and source-code folders are excluded by default when recognised.
+- Organisation retains each selected folder's structure unless the user explicitly approves a destination rule.
+- Every file change requires a preview, explicit approval, persistent audit record, and undo journal.
 
 ## Delivery roadmap
 
@@ -40,20 +40,30 @@ It must never reorganise an entire drive as one flat collection. Applications, g
 - [x] PDF and DOCX text extraction with local filename suggestions and title history.
 - [x] Command-line entry point, automated tests, and packaging instructions.
 
-### Stage 2 — selective review and organisation (next)
+### Stage 2 — selective review and organisation (implemented)
 
-- [ ] Folder tree that allows the user to include or exclude locations after choosing a drive.
-- [ ] Rules and recommendations for protecting applications, games, source-code repositories, dependencies, and user-designated safe zones.
-- [ ] Results interface with filters for duplicate groups, protected files, document title suggestions, and warnings.
-- [ ] Rules-based organiser using extensions, patterns, dates, and user profiles; it must work without AI.
-- [ ] Optional local NLP categorisation, kept separate from file-changing actions.
+- [x] Folder tree that allows the user to include or exclude locations after choosing a drive.
+- [x] Automatic folder classification into 7 categories (system, virtual environment, package dependencies, version control, game library, application, source code) with user override support.
+- [x] Reusable scan profiles storing root path, included/excluded folders, custom protected patterns, and document extraction settings.
+- [x] Deterministic rules engine with extension, pattern, date, size, and folder rule types; priority-based first-match-wins evaluation.
+- [x] Results interface with filters for duplicate groups, protected files, document title suggestions, unique files, unreadable files, and a search-by-name feature.
+- [x] Action approval workflow with approve selected, approve all, reject, and database persistence.
+- [x] Rules management UI with add, edit, enable/disable, and delete controls.
+- [x] Two-phase scan workflow: Phase 1 classifies folders, Phase 2 scans files with exclusions.
+- [x] 8 default organisation rules (Documents, Images, Audio, Video, Archives, Code, Installers, Old files archive).
+- [x] Error display section for scan warnings and unreadable files.
+- [x] Async CSV manifest export via background thread.
+- [x] Modern dark theme with sidebar-based navigation (6 pages).
+- [x] CLI subcommands: scan, profile, classify, organise.
+- [x] 188 automated tests across 13 test files.
 
-### Stage 3 — approved changes and recovery
+### Stage 3 — approved changes and recovery (next)
 
-- [ ] Rename and move preview with original and proposed paths.
-- [ ] Explicit action approval, collision handling, and a reversible transaction journal.
-- [ ] Duplicate resolution that selects a retained copy but never deletes without explicit approval.
+- [ ] Execute approved renames and moves with collision detection.
+- [ ] Persistent, reversible transaction journal for all file changes.
+- [ ] Duplicate resolution with explicit retained-copy selection; never auto-delete.
 - [ ] Re-scan and integrity verification immediately before changes are applied.
+- [ ] Undo capability for recently applied changes.
 
 ### Stage 4 — spreadsheet workflows and release quality
 
@@ -64,4 +74,4 @@ It must never reorganise an entire drive as one flat collection. Applications, g
 
 ## Explicit non-goals for the current version
 
-The current release does not delete duplicates, rename files, move files, reorganise folders, interpret images with OCR, analyse `.xlsm` data, merge spreadsheets, or use a spaCy/scikit-learn model. Those capabilities remain planned until their review and rollback safeguards exist.
+The current release proposes file actions but does not execute them. It does not interpret images with OCR, analyse `.xlsm` data, merge spreadsheets, or use a spaCy/scikit-learn model. Automatic deletion of duplicates is never performed — every action requires explicit user approval.

@@ -4,34 +4,39 @@
 
 ## Current baseline — complete
 
+### Stage 1: safe audit foundation
 - [x] Cross-platform scan-only desktop application for Windows, macOS, and Linux.
 - [x] Safe traversal, exact SHA-256 duplicate detection, local SQLite audit history, and CSV export.
 - [x] Offline PDF/DOCX text extraction and filename suggestions.
 - [x] Platform-aware protected folders and non-destructive default policy.
 
-## Next: selective drive review
+### Stage 2: selective review and organisation
+- [x] Folder tree with tri-state checkboxes for including or excluding individual folders.
+- [x] Automatic folder classification into 7 categories (system, virtual environment, package dependencies, version control, game library, application, source code) with user override support.
+- [x] Reusable scan profiles storing root path, included/excluded folders, custom protected patterns, and document extraction settings.
+- [x] Deterministic rules engine with extension, pattern, date, size, and folder rule types.
+- [x] 8 default organisation rules (Documents, Images, Audio, Video, Archives, Code, Installers, Old files archive).
+- [x] Results interface with filters: All, Duplicates, Duplicate Groups, Protected, Unique, Unreadable, With Title, and search-by-name.
+- [x] Action approval workflow: approve selected, approve all, reject, with database persistence.
+- [x] Rules management UI: add, edit, enable/disable, delete.
+- [x] Two-phase scan: Phase 1 classifies folders, Phase 2 scans files with exclusions.
+- [x] Error display section for scan warnings and unreadable files.
+- [x] Async CSV manifest export via background thread.
+- [x] Modern dark theme with sidebar navigation (6 pages: Home, Folders, Results, Actions, Rules, Log).
+- [x] CLI subcommands: scan, profile, classify, organise.
+- [x] Performance: throttled progress, batch DB recording, compiled regex, sorted table updates, pre-parsed rule configs, bulk classification save, log buffer with QTimer, log capped at 5000 lines.
+- [x] Bug fixes: extended metadata persisted, profile wired to CLI, dynamic profile_id, action approvals saved, folder exclusions persisted to profile, sync index alignment fixed.
+- [x] 188 automated tests across 13 test files.
 
-- [ ] Build a folder-selection tree for a selected drive or root folder.
-- [ ] Allow individual folder inclusion and exclusion before scan results are analysed for organisation.
-- [ ] Detect and recommend exclusion for system folders, installed applications, game libraries, source-code projects, package dependencies, virtual environments, and version-control repositories.
-- [ ] Explain every recommendation and permit an explicit user override.
-- [ ] Store user exclusions locally as reusable scan profiles.
+## Next: execute approved changes (Stage 3)
 
-## Next: controlled organisation without AI
+- [ ] Execute approved renames and moves with collision detection.
+- [ ] Persistent, reversible transaction journal for all file changes.
+- [ ] Duplicate resolution with explicit retained-copy selection; never auto-delete.
+- [ ] Re-scan and integrity verification immediately before changes are applied.
+- [ ] Undo capability for recently applied changes.
 
-- [ ] Add deterministic rules based on extensions, filename patterns, dates, sizes, and user-selected profiles.
-- [ ] Preserve the selected folder's structure by default; never flatten or mix unrelated folders.
-- [ ] Keep text-derived title suggestions optional and separate from proposed file actions.
-- [ ] Add a result preview that shows `original path -> proposed path` for every proposed action.
-
-## Required before file changes
-
-- [ ] Add explicit per-action and bulk approval controls.
-- [ ] Add collision detection and a re-scan immediately before applying changes.
-- [ ] Add a persistent, reversible transaction journal for renames, moves, and approved duplicate resolution.
-- [ ] Never delete a file automatically; require explicit approval to resolve each duplicate group.
-
-## Later: advanced data workflows and release
+## Later: advanced data workflows and release (Stage 4)
 
 - [ ] Define supported spreadsheet schemas before enabling `.xlsx` or `.xlsm` consolidation.
 - [ ] Implement read-only spreadsheet inspection, followed by an approved master-workbook workflow.
