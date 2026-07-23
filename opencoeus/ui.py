@@ -7,7 +7,7 @@ from pathlib import Path
 from PyQt6.QtCore import QSize, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
     QFormLayout, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QListWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem,
@@ -141,7 +141,7 @@ class SidebarButton(QToolButton):
     def __init__(self, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setCheckable(True)
-        self.setFixedHeight(40)
+        self.setFixedSize(134, 40)
         self.setText(label)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.setAutoRaise(True)
@@ -194,7 +194,7 @@ class StatCard(QWidget):
         self._val.setText(value)
 
 
-class ProfileEditDialog(QMainWindow):
+class ProfileEditDialog(QDialog):
     saved = pyqtSignal()
 
     def __init__(self, store: AuditStore, profile: ProfileConfig | None,
@@ -207,9 +207,7 @@ class ProfileEditDialog(QMainWindow):
         self.setMinimumSize(500, 480)
         self.setModal(True)
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        lay = QVBoxLayout(central)
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 24, 24, 24)
         lay.setSpacing(16)
 
@@ -282,7 +280,7 @@ class ProfileEditDialog(QMainWindow):
 
     def _apply_dialog_style(self) -> None:
         self.setStyleSheet(f"""
-            QMainWindow {{ background: {COLORS["bg"]}; }}
+            QDialog {{ background: {COLORS["bg"]}; }}
             QLabel {{ color: {COLORS["text"]}; }}
             QLineEdit {{
                 background: {COLORS["surface2"]}; color: {COLORS["text"]};
@@ -665,6 +663,11 @@ class MainWindow(QMainWindow):
         self.folder_tree.setHeaderLabels(["Folder", "Files", "Size", "Type"])
         self.folder_tree.setColumnCount(4)
         self.folder_tree.setAlternatingRowColors(False)
+        tree_header = self.folder_tree.header()
+        tree_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 4):
+            tree_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        tree_header.setMinimumSectionSize(60)
         self.folder_tree.itemChanged.connect(self._on_folder_toggled)
         lay.addWidget(self.folder_tree, 1)
 
@@ -769,7 +772,12 @@ class MainWindow(QMainWindow):
         table = QTableWidget()
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
-        table.horizontalHeader().setSectionResizeMode(stretch_column, QHeaderView.ResizeMode.Stretch)
+        for col in range(len(headers)):
+            if col == stretch_column:
+                table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+            else:
+                table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setMinimumSectionSize(60)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setSelectionMode(select_mode)
         table.setAlternatingRowColors(True)
