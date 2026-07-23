@@ -391,24 +391,23 @@ class MainWindow(QMainWindow):
                 color: {COLORS["text3"]}; background: {COLORS["surface2"]}; border-color: {COLORS["surface3"]};
             }}
             QTreeWidget {{
-                background: {COLORS["surface"]}; color: {COLORS["text"]};
-                border: 1px solid {COLORS["border"]}; border-radius: 12px;
-                padding: 4px; font-size: 12px; outline: none;
+                background: transparent; color: {COLORS["text"]};
+                border: none; padding: 4px; font-size: 12px; outline: none;
             }}
             QTreeWidget::item {{ padding: 4px 6px; border: none; border-radius: 8px; }}
             QTreeWidget::item:selected {{ background: {COLORS["accent2"]}; }}
             QTreeWidget::item:hover {{ background: {COLORS["surface3"]}; }}
             QTreeWidget::branch {{ background: {COLORS["surface"]}; }}
+            QHeaderView {{ background: transparent; border: none; }}
             QHeaderView::section {{
                 background: {COLORS["surface"]}; color: {COLORS["text2"]};
                 border: none; border-bottom: 2px solid {COLORS["accent"]};
                 padding: 8px 12px; font-size: 11px; font-weight: bold;
             }}
             QTableWidget {{
-                background: {COLORS["surface"]}; color: {COLORS["text"]};
+                background: transparent; color: {COLORS["text"]};
                 alternate-background-color: {COLORS["surface2"]};
-                border: none; border-radius: 12px;
-                padding: 4px; font-size: 12px; outline: none;
+                border: none; font-size: 12px; outline: none;
             }}
             QTableWidget::item {{ padding: 8px 12px; border: none; }}
             QTableWidget::item:selected {{
@@ -667,13 +666,14 @@ class MainWindow(QMainWindow):
         self.folder_tree.setHeaderLabels(["Folder", "Files", "Size", "Type"])
         self.folder_tree.setColumnCount(4)
         self.folder_tree.setAlternatingRowColors(False)
+        self.folder_tree.viewport().setAutoFillBackground(False)
         tree_header = self.folder_tree.header()
         tree_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, 4):
             tree_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         tree_header.setMinimumSectionSize(60)
         self.folder_tree.itemChanged.connect(self._on_folder_toggled)
-        lay.addWidget(self.folder_tree, 1)
+        lay.addWidget(self._make_container(self.folder_tree), 1)
 
         return page
 
@@ -691,7 +691,7 @@ class MainWindow(QMainWindow):
             ["Path", "Size", "Status", "Duplicate of", "Title", "Ext", "Folder"],
             stretch_column=0,
         )
-        lay.addWidget(self.results_table, 1)
+        lay.addWidget(self._make_container(self.results_table), 1)
 
         return page
 
@@ -747,7 +747,7 @@ class MainWindow(QMainWindow):
             stretch_column=1,
             select_mode=QTableWidget.SelectionMode.ExtendedSelection,
         )
-        lay.addWidget(self.actions_table, 1)
+        lay.addWidget(self._make_container(self.actions_table), 1)
 
         return page
 
@@ -789,7 +789,22 @@ class MainWindow(QMainWindow):
         table.verticalHeader().setDefaultSectionSize(38)
         table.setShowGrid(False)
         table.setSortingEnabled(False)
+        table.viewport().setAutoFillBackground(False)
         return table
+
+    def _make_container(self, widget: QWidget) -> QFrame:
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background: {COLORS["surface"]};
+                border-radius: 12px;
+                border: none;
+            }}
+        """)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addWidget(widget)
+        return frame
 
     # ------------------------------------------------------------------ #
     #  PAGE NAVIGATION                                                     #
