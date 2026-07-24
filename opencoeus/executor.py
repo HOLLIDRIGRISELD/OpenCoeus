@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -13,6 +14,9 @@ from .models import BatchStatus, EntryStatus, TransactionEntry
 
 
 HOLDING_ROOT = Path.home() / ".opencoeus" / "transactions"
+
+# MODULE-LEVEL LOCK TO PREVENT CONCURRENT BATCH EXECUTION.
+_batch_lock = threading.Lock()
 
 
 @dataclass
@@ -153,18 +157,60 @@ def cleanup_empty_folders(root_path: Path, excluded_folders: set[str] | None = N
 # ------------------------------------------------------------------ #
 
 
-def pre_execution_check(entries: list[TransactionEntry]) -> list[str]:
-    # VERIFIES ALL SOURCE FILES STILL EXIST AND HASHES MATCH. RETURNS ERRORS.
+def pre_execution_check(
+    entries: list[TransactionEntry], store: AuditStore,
+) -> tuple[list[TransactionEntry], list[str]]:
+    # VERIFIES SOURCE FILES EXIST AND HASHES MATCH. MARKS FAILURES IN DB.
+    # RETURNS (PASSING_ENTRIES, ERRORS).
+    passing: list[TransactionEntry] = []
     errors: list[str] = []
     for entry in entries:
         source = Path(entry.source_path)
         if not source.exists():
+            store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=f"File not found: {source}")
             errors.append(f"File not found: {entry.source_path}")
             continue
         error = verify_file_integrity(source, entry.source_hash, entry.source_size)
         if error:
+            store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=error)
             errors.append(error)
-    return errors
+            continue
+        passing.append(entry)
+    return passing, errors
+
+
+# ------------------------------------------------------------------ #
+#  CRASH RECOVERY                                                       #
+# ------------------------------------------------------------------ #
+
+
+def recover_crashed_batches(store: AuditStore) -> int:
+    # MARKS ANY BATCH STUCK IN EXECUTING STATUS AS FAILED (FROM CRASHED SESSIONS).
+    # RETURNS THE NUMBER OF RECOVERED BATCHES.
+    from sqlalchemy import select
+    from .models import TransactionBatch
+    recovered = 0
+    with store.session_factory() as session:
+        crashed = list(session.scalars(
+            select(TransactionBatch).where(TransactionBatch.status == BatchStatus.EXECUTING)
+        ).all())
+        for batch in crashed:
+            batch.status = BatchStatus.FAILED
+            recovered += 1
+            # MARK ANY ENTRIES STILL IN HOLDING AS FAILED TOO.
+            for entry in session.scalars(
+                select(TransactionEntry).where(
+                    TransactionEntry.batch_id == batch.id,
+                    TransactionEntry.status == EntryStatus.MOVED_TO_HOLDING,
+                )
+            ).all():
+                entry.status = EntryStatus.FAILED
+                entry.error_message = "Batch crashed during execution"
+        session.commit()
+    # CLEANUP HOLDING AREAS FOR RECOVERED BATCHES.
+    for batch in crashed:
+        cleanup_holding_area(batch.id)
+    return recovered
 
 
 # ------------------------------------------------------------------ #
@@ -178,6 +224,23 @@ def execute_batch(
     progress_callback=None,
 ) -> ExecutionResult:
     # MAIN EXECUTION PIPELINE: PRE-FLIGHT, MOVE TO HOLDING, MOVE TO DESTINATION, CLEANUP.
+    # USES A MODULE-LEVEL LOCK TO PREVENT CONCURRENT EXECUTION.
+    if not _batch_lock.acquire(blocking=False):
+        return ExecutionResult(
+            batch_id=batch_id,
+            errors=["Another batch is already executing"],
+        )
+    try:
+        return _execute_batch_inner(batch_id, store, progress_callback)
+    finally:
+        _batch_lock.release()
+
+
+def _execute_batch_inner(
+    batch_id: int,
+    store: AuditStore,
+    progress_callback=None,
+) -> ExecutionResult:
     result = ExecutionResult(batch_id=batch_id)
     entries = store.get_entries_by_batch(batch_id)
     pending_entries = [e for e in entries if e.status == EntryStatus.PENDING]
@@ -186,14 +249,13 @@ def execute_batch(
         result.skipped = len(entries) - len(pending_entries)
         return result
 
-    # PRE-FLIGHT: VERIFY SOURCE FILES.
-    errors = pre_execution_check(pending_entries)
-    if errors:
-        for error in errors:
-            result.errors.append(error)
-            result.failed += 1
-            result.total -= 1
-        if result.failed == result.total:
+    # PRE-FLIGHT: VERIFY SOURCE FILES AND FILTER OUT FAILURES.
+    passing_entries, preflight_errors = pre_execution_check(pending_entries, store)
+    if preflight_errors:
+        result.errors.extend(preflight_errors)
+        result.failed += len(preflight_errors)
+        result.total -= len(preflight_errors)
+        if not passing_entries:
             store.mark_batch(batch_id, BatchStatus.FAILED)
             return result
 
@@ -205,7 +267,7 @@ def execute_batch(
 
     # PHASE 1: MOVE SOURCE → HOLDING AREA.
     moved_to_holding: list[tuple[TransactionEntry, Path]] = []
-    for entry in pending_entries:
+    for entry in passing_entries:
         source = Path(entry.source_path)
         if not source.exists():
             store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=f"File not found: {entry.source_path}")
@@ -233,6 +295,15 @@ def execute_batch(
         destination = Path(entry.destination_path)
         try:
             actual_dest = safe_move(holding_path, destination)
+            # VERIFY FILE INTEGRITY AT DESTINATION AGAINST SOURCE HASH.
+            integrity_error = verify_file_integrity(actual_dest, entry.source_hash, entry.source_size)
+            if integrity_error:
+                # DESTINATION CORRUPTED — ROLLBACK THIS FILE TO ORIGINAL SOURCE.
+                safe_move(actual_dest, Path(entry.source_path))
+                store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=f"Integrity check failed: {integrity_error}")
+                result.errors.append(f"Integrity check failed for {entry.source_path}: {integrity_error}")
+                result.failed += 1
+                continue
             # HASH AT DESTINATION.
             dest_hash = sha256_file(actual_dest)
             store.update_entry(
@@ -244,7 +315,7 @@ def execute_batch(
             )
             # MARK THE PROPOSED ACTION AS APPLIED.
             if entry.action_id:
-                store.approve_action(entry.action_id)  # REUSE: MARKS APPLIED VIA BATCH
+                store.approve_action(entry.action_id)
             completed_entries.append((entry, actual_dest))
             result.completed += 1
             if progress_callback:
@@ -264,7 +335,6 @@ def execute_batch(
     # DERIVE ROOT PATH FROM ENTRIES AND CLEANUP EMPTY FOLDERS LEFT BY MOVES.
     if completed_entries:
         source_dirs = {Path(e.source_path).parent for e, _ in completed_entries}
-        # USE THE DEEPEST COMMON ANCESTOR AS ROOT.
         root_path = Path(os.path.commonpath([str(d) for d in source_dirs]))
         cleanup_empty_folders(root_path)
     store.mark_batch(batch_id, BatchStatus.COMPLETED, completed_at=datetime.now(UTC).replace(tzinfo=None))

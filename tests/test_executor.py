@@ -151,8 +151,16 @@ class HoldingAreaTests(unittest.TestCase):
 
 
 class PreExecutionCheckTests(unittest.TestCase):
+    def _make_store(self):
+        # CREATES A TEMPORARY AUDITSTORE FOR TESTING.
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
     def test_all_files_present(self):
         # VERIFIES THAT NO ERRORS ARE RETURNED WHEN ALL SOURCE FILES EXIST.
+        store = self._make_store()
         with tempfile.TemporaryDirectory() as tmp:
             f1 = Path(tmp) / "a.txt"
             f2 = Path(tmp) / "b.txt"
@@ -173,11 +181,13 @@ class PreExecutionCheckTests(unittest.TestCase):
                     status="pending",
                 ),
             ]
-            errors = pre_execution_check(entries)
+            passing, errors = pre_execution_check(entries, store)
             self.assertEqual(errors, [])
+            self.assertEqual(len(passing), 2)
 
     def test_missing_file_detected(self):
         # VERIFIES THAT AN ERROR IS RETURNED FOR MISSING SOURCE FILES.
+        store = self._make_store()
         from opencoeus.models import TransactionEntry
         entries = [
             TransactionEntry(
@@ -187,12 +197,14 @@ class PreExecutionCheckTests(unittest.TestCase):
                 status="pending",
             ),
         ]
-        errors = pre_execution_check(entries)
+        passing, errors = pre_execution_check(entries, store)
         self.assertEqual(len(errors), 1)
         self.assertIn("not found", errors[0])
+        self.assertEqual(len(passing), 0)
 
     def test_hash_mismatch_detected(self):
         # VERIFIES THAT AN ERROR IS RETURNED WHEN SOURCE FILE HASH DOES NOT MATCH.
+        store = self._make_store()
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "changed.txt"
             f.write_text("original")
@@ -205,9 +217,10 @@ class PreExecutionCheckTests(unittest.TestCase):
                     status="pending",
                 ),
             ]
-            errors = pre_execution_check(entries)
+            passing, errors = pre_execution_check(entries, store)
             self.assertEqual(len(errors), 1)
             self.assertIn("Hash mismatch", errors[0])
+            self.assertEqual(len(passing), 0)
 
 
 class RollbackTests(unittest.TestCase):
