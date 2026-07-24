@@ -958,5 +958,60 @@ class AuditStoreTransactionEntryTests(unittest.TestCase):
             store.close()
 
 
+# STAGE 3: SCHEMA DRIFT MIGRATION TESTS.
+
+
+class EnsureColumnsTests(unittest.TestCase):
+    def test_ensure_columns_adds_missing_columns(self):
+        # VERIFIES THAT _ensure_columns ADDS COLUMNS MISSING FROM AN OLDER DATABASE.
+        from opencoeus.database import _ensure_columns
+        from sqlalchemy import create_engine, inspect, text
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "old.sqlite3"
+            engine = create_engine(f"sqlite:///{database_path.as_posix()}")
+            # CREATE A MINIMAL PROPOSED_ACTIONS TABLE WITHOUT THE NEW COLUMNS.
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE proposed_actions (
+                        id INTEGER PRIMARY KEY,
+                        scan_profile_id INTEGER NOT NULL,
+                        original_path TEXT NOT NULL,
+                        proposed_path TEXT NOT NULL,
+                        action_type VARCHAR(32) NOT NULL,
+                        rule_id INTEGER,
+                        approved BOOLEAN DEFAULT 0,
+                        applied BOOLEAN DEFAULT 0,
+                        created_at DATETIME
+                    )
+                """))
+            # VERIFY THE MISSING COLUMNS ARE NOT THERE.
+            inspector_before = inspect(engine)
+            cols_before = {col["name"] for col in inspector_before.get_columns("proposed_actions")}
+            self.assertNotIn("reason", cols_before)
+            self.assertNotIn("batch_id", cols_before)
+            engine.dispose()
+            # RECREATE ENGINE AND RUN _ensure_columns (SIMULATES APP STARTUP).
+            engine2 = create_engine(f"sqlite:///{database_path.as_posix()}")
+            _ensure_columns(engine2)
+            engine2.dispose()
+            # VERIFY THE COLUMNS WERE ADDED WITH A FRESH ENGINE.
+            engine3 = create_engine(f"sqlite:///{database_path.as_posix()}")
+            inspector_after = inspect(engine3)
+            cols_after = {col["name"] for col in inspector_after.get_columns("proposed_actions")}
+            self.assertIn("reason", cols_after)
+            self.assertIn("batch_id", cols_after)
+            engine3.dispose()
+
+    def test_ensure_columns_is_idempotent(self):
+        # VERIFIES THAT _ensure_columns DOES NOT FAIL WHEN COLUMNS ALREADY EXIST.
+        from opencoeus.database import _ensure_columns
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "test.sqlite3"
+            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
+            # RUNNING AGAIN SHOULD NOT RAISE.
+            _ensure_columns(store.engine)
+            store.close()
+
+
 if __name__ == "__main__":
     unittest.main()

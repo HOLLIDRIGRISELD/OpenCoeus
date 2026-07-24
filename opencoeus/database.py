@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import sessionmaker
 
 from .config import database_url
@@ -20,10 +20,45 @@ from .models import (
 )
 
 
+# EXPECTED COLUMNS PER TABLE THAT MAY BE MISSING FROM OLDER DATABASES.
+# FORMAT: {table_name: [(column_name, sqlite_ddl), ...]}
+_EXPECTED_COLUMNS = {
+    "file_audits": [
+        ("relative_path", "TEXT"),
+        ("extension", "VARCHAR(32)"),
+        ("modified_at", "DATETIME"),
+        ("folder_path", "TEXT"),
+    ],
+    "naming_history": [
+        ("scan_profile_id", "INTEGER REFERENCES scan_profiles(id)"),
+    ],
+    "proposed_actions": [
+        ("reason", "TEXT DEFAULT ''"),
+        ("batch_id", "INTEGER REFERENCES transaction_batches(id)"),
+    ],
+}
+
+
+def _ensure_columns(engine) -> None:
+    # INSPECTS EXISTING TABLES AND ADDS ANY COLUMNS DEFINED IN THE MODEL BUT MISSING FROM THE DB.
+    # THIS HANDLES SCHEMA DRIFT FOR OLDER DATABASES WITHOUT A FULL MIGRATION FRAMEWORK.
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table_name, expected_columns in _EXPECTED_COLUMNS.items():
+            if table_name not in existing_tables:
+                continue
+            existing_cols = {col["name"] for col in inspector.get_columns(table_name)}
+            for col_name, col_ddl in expected_columns:
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_ddl}"))
+
+
 class AuditStore:
     def __init__(self, database_connection_url: str | None = None) -> None:
         self.engine = create_engine(database_connection_url or database_url())
         Base.metadata.create_all(self.engine)
+        _ensure_columns(self.engine)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)
 
     def record_file(self, file_path: str, file_size: int, file_hash: str | None, file_status: str,
