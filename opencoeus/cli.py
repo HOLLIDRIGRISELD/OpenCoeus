@@ -87,6 +87,15 @@ def main() -> int:
     organize_command.add_argument("--profile", type=str, default=None, help="Profile name to use for rules.")
     organize_command.add_argument("--rules-file", type=Path, default=None, help="JSON file with rule definitions.")
 
+    # EXECUTE COMMAND: EXECUTE APPROVED FILE ACTIONS.
+    execute_command = command_subparsers.add_parser("execute", help="Execute approved file organization actions.")
+    execute_command.add_argument("--profile", type=str, default=None, help="Profile name to execute actions for.")
+    execute_command.add_argument("--dry-run", action="store_true", help="Show what would be done without executing.")
+
+    # UNDO COMMAND: UNDO THE LAST EXECUTED BATCH.
+    undo_command = command_subparsers.add_parser("undo", help="Undo the last executed batch of file moves.")
+    undo_command.add_argument("--profile", type=str, default=None, help="Profile name to undo actions for.")
+
     command_arguments = command_parser.parse_args()
 
     if command_arguments.command == "scan":
@@ -97,6 +106,10 @@ def main() -> int:
         return _run_classify(command_arguments)
     if command_arguments.command == "organize":
         return _run_organize(command_arguments)
+    if command_arguments.command == "execute":
+        return _run_execute(command_arguments)
+    if command_arguments.command == "undo":
+        return _run_undo(command_arguments)
     return 0
 
 
@@ -258,6 +271,77 @@ def _run_organize(args) -> int:
             print(f"  ... and {len(matches) - 10} more.")
     else:
         print("\nNo actions proposed. Files are already organized or no rules matched.")
+    store.close()
+    return 0
+
+
+def _run_execute(args) -> int:
+    store = AuditStore()
+    # DETERMINE PROFILE ID.
+    profile_id = 1
+    if args.profile:
+        loaded = load_profile_by_name(store, args.profile)
+        if loaded is None:
+            print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
+            store.close()
+            return 1
+        profile_id = loaded.profile_id
+    # CHECK FOR APPROVED ACTIONS.
+    actions = store.get_proposed_actions(profile_id)
+    approved = [a for a in actions if a.approved]
+    if not approved:
+        print("No approved actions to execute.", file=sys.stderr)
+        store.close()
+        return 1
+    print(f"Found {len(approved)} approved actions.")
+    if args.dry_run:
+        for action in approved:
+            print(f"  {action.action_type:6s}  {action.original_path}")
+            print(f"         -> {action.proposed_path}")
+        print("\nDry run complete. No files were moved.")
+        store.close()
+        return 0
+    # PREPARE AND EXECUTE.
+    from .journal import prepare_execution, run_execution
+    batch_id, count = prepare_execution(store, profile_id, f"{len(approved)} file moves via CLI")
+    if batch_id == 0:
+        print("Failed to create execution batch.", file=sys.stderr)
+        store.close()
+        return 1
+    print(f"Executing batch {batch_id} ({count} files)...")
+    def progress(msg):
+        print(f"  {msg}")
+    result = run_execution(batch_id, store, progress)
+    print(f"\nExecution complete: {result.completed} completed, {result.failed} failed.")
+    if result.errors:
+        for error in result.errors:
+            print(f"  ERROR: {error}", file=sys.stderr)
+    store.close()
+    return 0 if result.failed == 0 else 1
+
+
+def _run_undo(args) -> int:
+    store = AuditStore()
+    # DETERMINE PROFILE ID.
+    profile_id = None
+    if args.profile:
+        loaded = load_profile_by_name(store, args.profile)
+        if loaded is None:
+            print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
+            store.close()
+            return 1
+        profile_id = loaded.profile_id
+    # FIND LATEST COMPLETED BATCH.
+    from .journal import undo_last_batch
+    batch_id, errors = undo_last_batch(store, profile_id)
+    if batch_id is None:
+        print("No completed batches to undo.", file=sys.stderr)
+        store.close()
+        return 1
+    print(f"Undone batch {batch_id}.")
+    if errors:
+        for error in errors:
+            print(f"  WARNING: {error}", file=sys.stderr)
     store.close()
     return 0
 

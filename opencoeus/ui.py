@@ -151,6 +151,21 @@ class ExportWorker(QThread):
         self.finished_export.emit(str(self.path))
 
 
+class ExecutionWorker(QThread):
+    finished_execution = pyqtSignal(object)
+    message = pyqtSignal(str)
+
+    def __init__(self, batch_id: int, store: AuditStore) -> None:
+        super().__init__()
+        self.batch_id = batch_id
+        self.store = store
+
+    def run(self) -> None:
+        from .journal import run_execution
+        result = run_execution(self.batch_id, self.store, lambda msg: self.message.emit(str(msg)))
+        self.finished_execution.emit(result)
+
+
 class RuleEditDialog(QDialog):
     def __init__(self, parent=None, rule: dict | None = None) -> None:
         super().__init__(parent)
@@ -428,6 +443,7 @@ class MainWindow(QMainWindow):
         self.store = AuditStore()
         self.phase_one_worker: PhaseOneWorker | None = None
         self.phase_two_worker: PhaseTwoWorker | None = None
+        self.execution_worker: ExecutionWorker | None = None
         self._nav_buttons: list[SidebarButton] = []
         self._pages: list[QWidget] = []
         self._log_buffer: list[str] = []
@@ -944,6 +960,51 @@ class MainWindow(QMainWindow):
         )
         lay.addWidget(self._make_container(self.actions_table), 1)
 
+        # EXECUTE / UNDO TOOLBAR.
+        exec_toolbar = QHBoxLayout()
+        exec_toolbar.setSpacing(8)
+
+        self.execute_btn = QPushButton("Execute Approved")
+        self.execute_btn.setFixedWidth(150)
+        self.execute_btn.setStyleSheet(f"""
+            QPushButton {{ background: {COLORS["green_bg"]}; color: {COLORS["green"]}; border: 1px solid {COLORS["green"]}; font-weight: bold; }}
+            QPushButton:hover {{ background: {COLORS["green"]}; color: #000; }}
+            QPushButton:disabled {{ color: {COLORS["text3"]}; background: {COLORS["surface2"]}; border-color: {COLORS["surface3"]}; }}
+        """)
+        self.execute_btn.clicked.connect(self._execute_approved)
+        self.execute_btn.setEnabled(False)
+        exec_toolbar.addWidget(self.execute_btn)
+
+        self.undo_btn = QPushButton("Undo Last Batch")
+        self.undo_btn.setFixedWidth(140)
+        self.undo_btn.setStyleSheet(f"""
+            QPushButton {{ background: {COLORS["yellow_bg"]}; color: {COLORS["yellow"]}; border: 1px solid {COLORS["yellow"]}; }}
+            QPushButton:hover {{ background: {COLORS["yellow"]}; color: #000; }}
+            QPushButton:disabled {{ color: {COLORS["text3"]}; background: {COLORS["surface2"]}; border-color: {COLORS["surface3"]}; }}
+        """)
+        self.undo_btn.clicked.connect(self._undo_last_batch)
+        exec_toolbar.addWidget(self.undo_btn)
+
+        exec_toolbar.addStretch()
+        lay.addLayout(exec_toolbar)
+
+        # BATCH HISTORY TABLE.
+        batch_header = QHBoxLayout()
+        batch_header.setSpacing(8)
+        batch_header.addWidget(QLabel("Batch History"))
+        self.batch_history_label = QLabel("")
+        self.batch_history_label.setStyleSheet(f"color: {COLORS['text2']}; font-size: 12px;")
+        batch_header.addWidget(self.batch_history_label)
+        batch_header.addStretch()
+        lay.addLayout(batch_header)
+
+        self.batch_table = self._make_table(
+            ["ID", "Description", "Status", "Files", "Date"],
+            stretch_column=1,
+        )
+        self.batch_table.setMaximumHeight(150)
+        lay.addWidget(self._make_container(self.batch_table))
+
         return page
 
     # -- RULES PAGE ------------------------------------------------------- #
@@ -1315,6 +1376,124 @@ class MainWindow(QMainWindow):
         )
         total = self.actions_table.rowCount()
         self.actions_count_label.setText(f"{approved} / {total} approved")
+        self.execute_btn.setEnabled(approved > 0)
+        self._refresh_batch_history()
+
+    # ------------------------------------------------------------------ #
+    #  EXECUTE / UNDO / BATCH HISTORY                                      #
+    # ------------------------------------------------------------------ #
+    def _execute_approved(self) -> None:
+        # PREPARES AND EXECUTES ALL APPROVED ACTIONS.
+        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
+        approved_count = sum(
+            1 for r in range(self.actions_table.rowCount())
+            if self.actions_table.item(r, 0) and self.actions_table.item(r, 0).text() == "APPROVED"
+        )
+        if approved_count == 0:
+            return
+        confirm = QMessageBox.question(
+            self, "Execute Actions",
+            f"Execute {approved_count} approved file moves?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        from .journal import prepare_execution
+        batch_id, count = prepare_execution(
+            self.store, profile_id, f"{approved_count} file moves from UI"
+        )
+        if batch_id == 0:
+            QMessageBox.warning(self, "Execute", "No actions to execute.")
+            return
+        self.progress_bar.show()
+        self._status.showMessage(f"Executing batch {batch_id}...")
+        self.execute_btn.setEnabled(False)
+        self.execution_worker = ExecutionWorker(batch_id, self.store)
+        self.execution_worker.message.connect(self._on_log_message)
+        self.execution_worker.finished_execution.connect(self._on_execution_done)
+        self.execution_worker.start()
+
+    def _on_execution_done(self, result) -> None:
+        # HANDLES COMPLETION OF AN EXECUTION BATCH.
+        self.progress_bar.hide()
+        self.execute_btn.setEnabled(True)
+        self._refresh_batch_history()
+        msg = f"Execution complete: {result.completed} completed, {result.failed} failed."
+        self._status.showMessage(msg)
+        self._on_log_message(f"<b>{msg}</b>")
+        if result.errors:
+            for error in result.errors:
+                self._on_log_message(f"  ERROR: {error}")
+        if result.failed > 0:
+            QMessageBox.warning(self, "Execution", f"{result.failed} files failed to move.\nCheck the log for details.")
+        else:
+            QMessageBox.information(self, "Execution", f"Successfully moved {result.completed} files.")
+
+    def _undo_last_batch(self) -> None:
+        # UNDOES THE MOST RECENTLY COMPLETED BATCH.
+        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else None
+        batches = self.store.get_undoable_batches(profile_id)
+        if not batches:
+            QMessageBox.information(self, "Undo", "No completed batches to undo.")
+            return
+        batch = batches[0]
+        entry_count = len(self.store.get_entries_by_batch(batch.id, status="completed"))
+        confirm = QMessageBox.question(
+            self, "Undo Batch",
+            f"Undo batch from {batch.created_at}?\n{entry_count} files will be moved back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        from .executor import undo_batch
+        errors = undo_batch(batch.id, self.store)
+        self._refresh_batch_history()
+        if errors:
+            for error in errors:
+                self._on_log_message(f"  WARNING: {error}")
+            QMessageBox.warning(self, "Undo", f"Undo completed with {len(errors)} warnings.")
+        else:
+            QMessageBox.information(self, "Undo", f"Batch undone. {entry_count} files restored.")
+
+    def _refresh_batch_history(self) -> None:
+        # REFILLS THE BATCH HISTORY TABLE.
+        t = self.batch_table
+        t.setUpdatesEnabled(False)
+        t.blockSignals(True)
+        t.setSortingEnabled(False)
+        try:
+            profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else None
+            batches = self.store.get_undoable_batches(profile_id)
+            # ALSO GET NON-COMPLETED RECENT BATCHES.
+            from .models import TransactionBatch
+            with self.store.session_factory() as session:
+                from sqlalchemy import select
+                stmt = select(TransactionBatch)
+                if profile_id:
+                    stmt = stmt.where(TransactionBatch.scan_profile_id == profile_id)
+                all_batches = list(session.scalars(stmt.order_by(TransactionBatch.id.desc()).limit(20)).all())
+            t.setRowCount(len(all_batches))
+            for i, batch in enumerate(all_batches):
+                t.setItem(i, 0, QTableWidgetItem(str(batch.id)))
+                t.setItem(i, 1, QTableWidgetItem(batch.description or "—"))
+                status_item = QTableWidgetItem(batch.status.upper())
+                status_color = {
+                    "completed": COLORS["green"],
+                    "failed": COLORS["red"],
+                    "undone": COLORS["yellow"],
+                    "executing": COLORS["accent"],
+                    "pending": COLORS["text3"],
+                }.get(batch.status, COLORS["text3"])
+                status_item.setForeground(QColor(status_color))
+                t.setItem(i, 2, status_item)
+                entry_count = len(self.store.get_entries_by_batch(batch.id))
+                t.setItem(i, 3, QTableWidgetItem(str(entry_count)))
+                date_str = batch.completed_at or batch.undone_at or batch.created_at
+                t.setItem(i, 4, QTableWidgetItem(str(date_str)[:19] if date_str else "—"))
+        finally:
+            t.setSortingEnabled(True)
+            t.blockSignals(False)
+            t.setUpdatesEnabled(True)
 
     # ------------------------------------------------------------------ #
     #  PROFILES                                                            #
