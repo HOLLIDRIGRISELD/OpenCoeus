@@ -29,29 +29,41 @@ def build_folder_tree(
     progress_callback=None,
 ) -> FolderNode:
     # BUILDS A RECURSIVE FOLDER TREE STARTING AT root_path, STOPPING AT max_depth.
+    # COMPUTES FILE COUNTS AND SIZES IN A SINGLE PASS DURING POPULATION.
     root_node = FolderNode(
         name=root_path.name or str(root_path),
         path=root_path,
         depth=0,
         is_protected=is_protected(root_path, protected_patterns),
     )
-    _populate_children(root_node, protected_patterns, max_depth, progress_callback)
-    _compute_local_stats(root_node)
+    _populate_and_compute(root_node, protected_patterns, max_depth, progress_callback)
     return root_node
 
 
-def _populate_children(
+def _populate_and_compute(
     parent_node: FolderNode,
     protected_patterns: list[str],
     max_depth: int,
     progress_callback,
     _folder_counter: list[int] | None = None,
 ) -> None:
-    # RECURSIVELY DISCOVERS SUBDIRECTORIES AND POPULATES CHILD NODES.
+    # RECURSIVELY DISCOVERS SUBDIRECTORIES, POPULATES CHILDREN, AND COMPUTES STATS IN ONE PASS.
     if parent_node.depth >= max_depth:
         return
     if _folder_counter is None:
         _folder_counter = [0]
+    # COMPUTE DIRECT FILE COUNT AND SIZE FOR THIS NODE.
+    try:
+        for entry in parent_node.path.iterdir():
+            if entry.is_file() and not entry.is_symlink():
+                parent_node.file_count += 1
+                try:
+                    parent_node.total_size += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    pass
+    except PermissionError:
+        pass
+    # POPULATE CHILDREN.
     try:
         sorted_entries = sorted(parent_node.path.iterdir(), key=lambda entry: entry.name.lower())
     except PermissionError:
@@ -71,25 +83,10 @@ def _populate_children(
         _folder_counter[0] += 1
         if progress_callback and _folder_counter[0] % 5 == 0:
             progress_callback(child_node.path)
-        _populate_children(child_node, protected_patterns, max_depth, progress_callback, _folder_counter)
-
-
-def _compute_local_stats(node: FolderNode) -> None:
-    # COMPUTES DIRECT FILE COUNT AND SIZE FOR EACH NODE, THEN RECURSIVELY AGGREGATES UP.
-    try:
-        for entry in node.path.iterdir():
-            if entry.is_file() and not entry.is_symlink():
-                node.file_count += 1
-                try:
-                    node.total_size += entry.stat(follow_symlinks=False).st_size
-                except OSError:
-                    pass
-    except PermissionError:
-        pass
-    for child in node.children:
-        _compute_local_stats(child)
-        node.file_count += child.file_count
-        node.total_size += child.total_size
+        _populate_and_compute(child_node, protected_patterns, max_depth, progress_callback, _folder_counter)
+        # AGGREGATE CHILD STATS UP TO PARENT.
+        parent_node.file_count += child_node.file_count
+        parent_node.total_size += child_node.total_size
 
 
 def flatten_tree(root: FolderNode) -> list[dict]:

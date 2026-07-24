@@ -437,7 +437,9 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(True)
 
         # PERSIST PROPOSED ACTIONS TO DATABASE.
-        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
+        if self.current_profile is None or self.current_profile.profile_id is None:
+            self.current_profile = create_profile("default")
+        profile_id = self.current_profile.profile_id
         actions_data = [
             {"original_path": m.original_path, "proposed_path": m.proposed_path,
              "action_type": m.action_type, "rule_id": m.rule_id, "reason": m.reason}
@@ -485,7 +487,9 @@ class MainWindow(QMainWindow):
             return
         if self.execution_worker and self.execution_worker.isRunning():
             return
-        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
+        if self.current_profile is None or self.current_profile.profile_id is None:
+            self.current_profile = create_profile("default")
+        profile_id = self.current_profile.profile_id
         approved_count = sum(
             1 for r in range(self.actions_page.actions_table.rowCount())
             if self.actions_page.actions_table.item(r, 0)
