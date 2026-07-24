@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import os
 import platform
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 COMMON_PROTECTED_PATTERNS = [
@@ -57,10 +60,12 @@ def default_application_data_directory(operating_system_name: str | None = None)
 def database_url() -> str:
     configured_data_directory = os.getenv("OPENCOEUS_DATA_DIR")
     application_data_directory = Path(configured_data_directory) if configured_data_directory else default_application_data_directory()
+    logger.debug("Using data directory: %s", application_data_directory)
     try:
         application_data_directory.mkdir(parents=True, exist_ok=True)
     except OSError:
         # USES A LOCAL FOLDER WHEN THE NORMAL PER-USER DATA DIRECTORY IS READ-ONLY.
+        logger.warning("Falling back to local .opencoeus directory")
         application_data_directory = Path.cwd() / ".opencoeus"
         application_data_directory.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{(application_data_directory / 'opencoeus.sqlite3').as_posix()}"

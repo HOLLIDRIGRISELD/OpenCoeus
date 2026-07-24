@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "opencoeus"
+version = "0.1.0"
+description = "Offline-first Data Lifecycle Management desktop application"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "OpenCoeus Contributors"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "PyQt6>=6.7,<7",
+    "SQLAlchemy>=2.0,<3",
+    "pypdf>=4.0,<6",
+    "python-docx>=1.1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10",
+    "pyinstaller>=6.0,<7",
+]
+
+[project.scripts]
+opencoeus = "opencoeus.cli:main"
+opencoeus-gui = "opencoeus.ui:main"
+
+[tool.setuptools.packages.find]
+include = ["opencoeus*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["*Tests", "Test*"]
+python_functions = ["test_*"]

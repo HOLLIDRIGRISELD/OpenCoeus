@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import create_engine, event, inspect, select, text
@@ -21,6 +22,8 @@ from .models import (
     TransactionBatch,
     TransactionEntry,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # EXPECTED COLUMNS PER TABLE THAT MAY BE MISSING FROM OLDER DATABASES.
@@ -47,6 +50,8 @@ def _ensure_columns(engine) -> None:
     # THIS HANDLES SCHEMA DRIFT FOR OLDER DATABASES WITHOUT A FULL MIGRATION FRAMEWORK.
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
+    tables_to_check = [t for t in _EXPECTED_COLUMNS if t in existing_tables]
+    logger.info("Ensuring schema columns for %d tables", len(tables_to_check))
     with engine.begin() as conn:
         for table_name, expected_columns in _EXPECTED_COLUMNS.items():
             if table_name not in existing_tables:
@@ -55,6 +60,7 @@ def _ensure_columns(engine) -> None:
             for col_name, col_ddl in expected_columns:
                 if col_name not in existing_cols:
                     conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_ddl}"))
+                    logger.info("Added missing column %s.%s", table_name, col_name)
 
 
 class AuditStore:
@@ -97,6 +103,7 @@ class AuditStore:
 
     def record_files_batch(self, records: list[tuple]) -> None:
         # BULK INSERTS OR UPDATES MULTIPLE FILE RECORDS IN A SINGLE SESSION FOR PERFORMANCE.
+        logger.debug("Recording %d files to database", len(records))
         with self.session_factory() as session:
             for record in records:
                 file_path, file_size, file_hash, file_status = record[0], record[1], record[2], record[3]
