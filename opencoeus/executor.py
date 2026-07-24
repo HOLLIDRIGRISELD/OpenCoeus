@@ -254,7 +254,6 @@ def _execute_batch_inner(
     if preflight_errors:
         result.errors.extend(preflight_errors)
         result.failed += len(preflight_errors)
-        result.total -= len(preflight_errors)
         if not passing_entries:
             store.mark_batch(batch_id, BatchStatus.FAILED)
             return result

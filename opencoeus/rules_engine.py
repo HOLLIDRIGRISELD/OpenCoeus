@@ -71,13 +71,17 @@ class RulesEngine:
 
     def evaluate(self, manifest_rows: list[ManifestRow], rules: list[dict]) -> list[RuleMatch]:
         # EVALUATES ALL ENABLED RULES AGAINST EVERY MANIFEST ROW AND COLLECTS MATCHES.
-        sorted_rules = sorted(rules, key=lambda r: r.get("priority", 0))
         # PRE-PARSE ALL RULE CONFIGS ONCE TO AVOID PER-ROW JSON PARSING.
-        for rule in sorted_rules:
-            if isinstance(rule.get("rule_config"), str):
-                rule["_parsed_config"] = json.loads(rule["rule_config"])
+        # WORK ON COPIES TO AVOID MUTATING CALLER'S RULE DICTS.
+        prepared_rules: list[dict] = []
+        for rule in rules:
+            prepared = dict(rule)
+            if isinstance(prepared.get("rule_config"), str):
+                prepared["_parsed_config"] = json.loads(prepared["rule_config"])
             else:
-                rule["_parsed_config"] = rule.get("rule_config", {})
+                prepared["_parsed_config"] = prepared.get("rule_config", {})
+            prepared_rules.append(prepared)
+        sorted_rules = sorted(prepared_rules, key=lambda r: r.get("priority", 0))
         profile_excluded = set(self.profile.excluded_folders) if self.profile else set()
         profile_included = self.profile.included_folders if self.profile else []
         matches: list[RuleMatch] = []
@@ -136,6 +140,8 @@ class RulesEngine:
             return False
         try:
             file_date = datetime.fromisoformat(row.modified_at)
+            if file_date.tzinfo is not None:
+                file_date = file_date.replace(tzinfo=None)
         except ValueError:
             return False
         older_than_days = config.get("older_than_days")

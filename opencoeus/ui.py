@@ -134,9 +134,33 @@ class ExecutionWorker(QThread):
         self.store = store
 
     def run(self) -> None:
-        from .journal import run_execution
-        result = run_execution(self.batch_id, self.store, lambda msg: self.message.emit(str(msg)))
-        self.finished_execution.emit(result)
+        try:
+            from .journal import run_execution
+            result = run_execution(self.batch_id, self.store, lambda msg: self.message.emit(str(msg)))
+            self.finished_execution.emit(result)
+        except Exception as exc:
+            from .executor import ExecutionResult
+            self.finished_execution.emit(ExecutionResult(
+                batch_id=self.batch_id, errors=[f"Execution crashed: {exc}"]
+            ))
+
+
+class UndoWorker(QThread):
+    finished_undo = pyqtSignal(object)
+    message = pyqtSignal(str)
+
+    def __init__(self, batch_id: int, store: AuditStore) -> None:
+        super().__init__()
+        self.batch_id = batch_id
+        self.store = store
+
+    def run(self) -> None:
+        try:
+            from .executor import undo_batch
+            errors = undo_batch(self.batch_id, self.store, lambda msg: self.message.emit(str(msg)))
+            self.finished_undo.emit(errors)
+        except Exception as exc:
+            self.finished_undo.emit([f"Undo crashed: {exc}"])
 
 
 class RuleEditDialog(QDialog):
@@ -417,6 +441,7 @@ class MainWindow(QMainWindow):
         self.phase_one_worker: PhaseOneWorker | None = None
         self.phase_two_worker: PhaseTwoWorker | None = None
         self.execution_worker: ExecutionWorker | None = None
+        self.undo_worker: UndoWorker | None = None
         self._action_id_map: dict[str, int] = {}
         self._nav_buttons: list[SidebarButton] = []
         self._pages: list[QWidget] = []
@@ -1404,14 +1429,15 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Execution", f"Successfully moved {result.completed} files.")
 
     def _undo_last_batch(self) -> None:
-        # UNDOES THE MOST RECENTLY COMPLETED BATCH.
+        # UNDOES THE MOST RECENTLY COMPLETED BATCH ON A WORKER THREAD.
         profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else None
         batches = self.store.get_undoable_batches(profile_id)
         if not batches:
             QMessageBox.information(self, "Undo", "No completed batches to undo.")
             return
         batch = batches[0]
-        entry_count = len(self.store.get_entries_by_batch(batch.id, status="completed"))
+        from .models import EntryStatus
+        entry_count = len(self.store.get_entries_by_batch(batch.id, status=EntryStatus.COMPLETED))
         confirm = QMessageBox.question(
             self, "Undo Batch",
             f"Undo batch from {batch.created_at}?\n{entry_count} files will be moved back.",
@@ -1419,15 +1445,25 @@ class MainWindow(QMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        from .executor import undo_batch
-        errors = undo_batch(batch.id, self.store)
+        self.undo_btn.setEnabled(False)
+        self.progress_bar.show()
+        self._status.showMessage(f"Undoing batch {batch.id}...")
+        self.undo_worker = UndoWorker(batch.id, self.store)
+        self.undo_worker.message.connect(self._on_log_message)
+        self.undo_worker.finished_undo.connect(self._on_undo_done)
+        self.undo_worker.start()
+
+    def _on_undo_done(self, errors: list) -> None:
+        # HANDLES COMPLETION OF AN UNDO WORKER.
+        self.progress_bar.hide()
+        self.undo_btn.setEnabled(True)
         self._refresh_batch_history()
         if errors:
             for error in errors:
                 self._on_log_message(f"  WARNING: {error}")
             QMessageBox.warning(self, "Undo", f"Undo completed with {len(errors)} warnings.")
         else:
-            QMessageBox.information(self, "Undo", f"Batch undone. {entry_count} files restored.")
+            QMessageBox.information(self, "Undo", "Batch undone. Files restored.")
 
     def _refresh_batch_history(self) -> None:
         # REFILLS THE BATCH HISTORY TABLE.

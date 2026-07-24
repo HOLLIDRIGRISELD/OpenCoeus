@@ -202,6 +202,17 @@ class AuditStore:
             ).all()
             for action in actions:
                 session.delete(action)
+            # DELETE ASSOCIATED TRANSACTION BATCHES AND ENTRIES.
+            batches = session.scalars(
+                select(TransactionBatch).where(TransactionBatch.scan_profile_id == profile_id)
+            ).all()
+            for batch in batches:
+                entries = session.scalars(
+                    select(TransactionEntry).where(TransactionEntry.batch_id == batch.id)
+                ).all()
+                for entry in entries:
+                    session.delete(entry)
+                session.delete(batch)
             session.delete(profile)
             session.commit()
             return True
