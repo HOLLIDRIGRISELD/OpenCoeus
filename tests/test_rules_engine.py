@@ -400,5 +400,122 @@ class DefaultRulesSingleSourceTests(unittest.TestCase):
         self.assertGreater(len(engine_rules), 0)
 
 
+class TimezoneAwareDateTests(unittest.TestCase):
+    def _make_engine(self):
+        from opencoeus.profiles import ProfileConfig
+        return RulesEngine(ProfileConfig(), scan_root="/test")
+
+    def test_timezone_aware_date_converts_correctly(self):
+        # VERIFIES THAT TIMEZONE-AWARE DATES ARE CONVERTED TO LOCAL TIME BEFORE COMPARISON.
+        engine = self._make_engine()
+        row = ManifestRow(
+            path="/test/file.txt", size=100, sha256="", status="unique",
+            modified_at="2020-01-01T00:00:00+00:00",
+        )
+        config = {"older_than_days": 365}
+        # FILE IS >1 YEAR OLD, SHOULD MATCH.
+        self.assertTrue(engine._matches_date(row, config))
+
+    def test_naive_date_still_works(self):
+        # VERIFIES THAT NAIVE (NO TIMEZONE) DATES STILL WORK.
+        engine = self._make_engine()
+        row = ManifestRow(
+            path="/test/file.txt", size=100, sha256="", status="unique",
+            modified_at="2020-06-15T12:00:00",
+        )
+        config = {"older_than_days": 365}
+        self.assertTrue(engine._matches_date(row, config))
+
+    def test_future_date_does_not_match_older_than(self):
+        # VERIFIES THAT A FUTURE DATE DOES NOT MATCH OLDER_THAN RULE.
+        engine = self._make_engine()
+        row = ManifestRow(
+            path="/test/file.txt", size=100, sha256="", status="unique",
+            modified_at="2099-01-01T00:00:00+00:00",
+        )
+        config = {"older_than_days": 365}
+        self.assertFalse(engine._matches_date(row, config))
+
+
+class PathTraversalPreventionTests(unittest.TestCase):
+    def _make_engine(self):
+        from opencoeus.profiles import ProfileConfig
+        return RulesEngine(ProfileConfig(), scan_root="/safe/scan/root")
+
+    def test_traversal_attempt_returns_original_path(self):
+        # VERIFIES THAT PATH TRAVERSAL ATTEMPTS ARE BLOCKED.
+        engine = self._make_engine()
+        row = ManifestRow(
+            path="/safe/scan/root/file.txt", size=100, sha256="", status="unique",
+            extension=".txt",
+        )
+        template = "{root}/../../etc/passwd/{filename}"
+        result = engine._render_destination(row, template)
+        # SHOULD RETURN ORIGINAL PATH WHEN TRAVERSAL DETECTED.
+        self.assertEqual(result, row.path)
+
+    def test_normal_template_renders_correctly(self):
+        # VERIFIES THAT NORMAL TEMPLATES RENDER WITHOUT BLOCKING.
+        engine = self._make_engine()
+        row = ManifestRow(
+            path="/safe/scan/root/docs/file.pdf", size=100, sha256="", status="unique",
+            extension=".pdf",
+        )
+        template = "{root}/Documents/{filename}"
+        result = engine._render_destination(row, template)
+        self.assertEqual(result, "/safe/scan/root/Documents/file.pdf")
+
+    def test_traversal_via_folder_placeholder(self):
+        # VERIFIES THAT FOLDER PLACEHOLDER TRAVERSAL STAYS WITHIN SCAN ROOT.
+        from pathlib import Path as _P
+        engine = self._make_engine()
+        row = ManifestRow(
+            path="/safe/scan/root/../../etc/shadow", size=100, sha256="", status="unique",
+            extension="", folder_path="/safe/scan/root/../../etc",
+        )
+        template = "{root}/{folder}/{filename}"
+        result = engine._render_destination(row, template)
+        # THE RESULT MUST RESOLVE TO A PATH WITHIN THE SCAN ROOT, OR BE THE ORIGINAL.
+        scan_root_resolved = _P(engine.scan_root).resolve()
+        result_resolved = _P(result).resolve()
+        self.assertTrue(
+            str(result_resolved).startswith(str(scan_root_resolved)) or result == row.path,
+            f"Path traversal not blocked: {result_resolved} is outside {scan_root_resolved}"
+        )
+
+
+class MalformedProfileJsonTests(unittest.TestCase):
+    def test_malformed_json_returns_empty_lists(self):
+        # VERIFIES THAT MALFORMED JSON IN PROFILE FIELDS DOES NOT CRASH.
+        import types
+        from opencoeus.profiles import _db_profile_to_config
+        fake = types.SimpleNamespace(
+            id=1, name="test", root_path="",
+            included_folders="NOT VALID JSON{{", excluded_folders="[1, 2",
+            custom_protected_patterns="", document_extraction=True,
+        )
+        config = _db_profile_to_config(fake)
+        self.assertEqual(config.included_folders, [])
+        self.assertEqual(config.excluded_folders, [])
+        self.assertEqual(config.custom_protected_patterns, [])
+
+    def test_valid_json_still_works(self):
+        # VERIFIES THAT VALID JSON IN PROFILE FIELDS IS PARSED CORRECTLY.
+        import types
+        from opencoeus.profiles import _db_profile_to_config
+        fake = types.SimpleNamespace(
+            id=1, name="test", root_path="",
+            included_folders='["folder1", "folder2"]',
+            excluded_folders='["node_modules"]',
+            custom_protected_patterns=r'["^\\.git$"]',
+            document_extraction=False,
+        )
+        config = _db_profile_to_config(fake)
+        self.assertEqual(config.included_folders, ["folder1", "folder2"])
+        self.assertEqual(config.excluded_folders, ["node_modules"])
+        self.assertEqual(config.custom_protected_patterns, ["^\\.git$"])
+        self.assertFalse(config.document_extraction)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from .config import database_url
 from .models import (
@@ -58,7 +59,16 @@ def _ensure_columns(engine) -> None:
 
 class AuditStore:
     def __init__(self, database_connection_url: str | None = None) -> None:
-        self.engine = create_engine(database_connection_url or database_url())
+        self.engine = create_engine(
+            database_connection_url or database_url(),
+            poolclass=NullPool,
+        )
+        # ENABLE FOREIGN KEY ENFORCEMENT FOR SQLITE ON EVERY NEW CONNECTION.
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_conn, _connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
         Base.metadata.create_all(self.engine)
         _ensure_columns(self.engine)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)
@@ -209,15 +219,27 @@ class AuditStore:
                 ).all()
             ]
             if batch_ids:
+                # CLEAR BATCH_ID REFERENCES FROM PROPOSED ACTIONS FIRST (FK).
+                actions_with_batch = session.scalars(
+                    select(ProposedAction).where(ProposedAction.batch_id.in_(batch_ids))
+                ).all()
+                for action in actions_with_batch:
+                    action.batch_id = None
                 entries = session.scalars(
                     select(TransactionEntry).where(TransactionEntry.batch_id.in_(batch_ids))
                 ).all()
                 for entry in entries:
                     session.delete(entry)
-                for batch_id in batch_ids:
-                    batch = session.get(TransactionBatch, batch_id)
+                for bid in batch_ids:
+                    batch = session.get(TransactionBatch, bid)
                     if batch:
                         session.delete(batch)
+            # DELETE ASSOCIATED NAMING HISTORY.
+            naming = session.scalars(
+                select(NamingHistory).where(NamingHistory.scan_profile_id == profile_id)
+            ).all()
+            for n in naming:
+                session.delete(n)
             session.delete(profile)
             session.commit()
             return True
@@ -226,7 +248,10 @@ class AuditStore:
 
     def save_classifications(self, profile_id: int, classifications: list[dict]) -> None:
         # SAVES A LIST OF FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE.
+        # SKIPS IF PROFILE DOES NOT EXIST (PREVENTS FK VIOLATIONS FROM ORPHANED DATA).
         with self.session_factory() as session:
+            if not session.get(ScanProfile, profile_id):
+                return
             # BULK DELETE EXISTING CLASSIFICATIONS FOR THIS PROFILE.
             session.query(FolderClassification).filter(
                 FolderClassification.scan_profile_id == profile_id
@@ -319,11 +344,17 @@ class AuditStore:
             return rule
 
     def delete_rule(self, rule_id: int) -> bool:
-        # REMOVES AN ORGANIZATION RULE BY ITS ID.
+        # REMOVES AN ORGANIZATION RULE BY ITS ID AND CLEANS UP ORPHANED PROPOSED ACTIONS.
         with self.session_factory() as session:
             rule = session.scalar(select(OrganizationRule).where(OrganizationRule.id == rule_id))
             if rule is None:
                 return False
+            # CLEAR RULE_ID FROM PROPOSED ACTIONS REFERENCING THIS RULE.
+            actions = session.scalars(
+                select(ProposedAction).where(ProposedAction.rule_id == rule_id)
+            ).all()
+            for action in actions:
+                action.rule_id = None
             session.delete(rule)
             session.commit()
             return True
