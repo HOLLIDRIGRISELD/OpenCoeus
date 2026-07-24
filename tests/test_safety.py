@@ -97,5 +97,20 @@ class SafetyTests(unittest.TestCase):
         self.assertFalse(is_protected(test_path, [r"^\.opencoeus$"]))
 
 
+class CacheEvictionTests(unittest.TestCase):
+    def test_cache_evicts_when_full(self):
+        # VERIFIES THAT _COMPILED_CACHE CAPS AT MAX_CACHE_SIZE AND EVICTS OLDEST.
+        from opencoeus.safety import _compiled_cache, MAX_CACHE_SIZE
+        _compiled_cache.clear()
+        # FILL THE CACHE TO THE LIMIT USING IS_PROTECTED.
+        for i in range(MAX_CACHE_SIZE):
+            is_protected(Path(f"test_{i}"), [f"^test_{i}$"])
+        self.assertEqual(len(_compiled_cache), MAX_CACHE_SIZE)
+        # ADDING ONE MORE SHOULD EVICT THE OLDEST.
+        is_protected(Path(f"test_{MAX_CACHE_SIZE}"), [f"^test_{MAX_CACHE_SIZE}$"])
+        self.assertEqual(len(_compiled_cache), MAX_CACHE_SIZE)
+        _compiled_cache.clear()
+
+
 if __name__ == "__main__":
     unittest.main()

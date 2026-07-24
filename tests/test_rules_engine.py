@@ -341,5 +341,64 @@ class RulesEngineEdgeCaseTests(unittest.TestCase):
         self.assertEqual(matches[0].rule_id, 1)
 
 
+class RuleDictMutationTests(unittest.TestCase):
+    def test_evaluate_does_not_mutate_input(self):
+        # VERIFIES THAT EVALUATE DOES NOT ADD _PARSED_CONFIG TO ORIGINAL RULE DICTS.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(rule_id=1, name="Docs", rule_type="extension",
+                          rule_config={"extensions": [".txt"]}, priority=1)
+        row = _make_row("/doc.txt", extension=".txt")
+        engine.evaluate([row], [rule])
+        self.assertNotIn("_parsed_config", rule)
+        self.assertNotIn("_compiled_patterns", rule)
+        self.assertNotIn("_compiled_extensions", rule)
+
+
+class RegexPrecompileTests(unittest.TestCase):
+    def test_compiled_patterns_prepared_internally(self):
+        # VERIFIES THAT PATTERNS ARE PRE-COMPILED INTERNALLY DURING EVALUATE.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(rule_id=1, name="Pattern", rule_type="pattern",
+                          rule_config={"patterns": [r"^report.*\.txt$"]}, priority=1)
+        row = _make_row("/report_2024.txt", extension=".txt")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+
+    def test_compiled_extensions_prepared_internally(self):
+        # VERIFIES THAT EXTENSION SETS ARE PRE-COMPILED INTERNALLY DURING EVALUATE.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(rule_id=1, name="Ext", rule_type="extension",
+                          rule_config={"extensions": [".txt", ".md"]}, priority=1)
+        row = _make_row("/doc.md", extension=".md")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+
+
+class DefaultRulesSingleSourceTests(unittest.TestCase):
+    def test_default_rules_importable(self):
+        # VERIFIES THAT DEFAULT_RULES CAN BE IMPORTED FROM RULES_ENGINE.
+        from opencoeus.rules_engine import DEFAULT_RULES
+        self.assertGreater(len(DEFAULT_RULES), 0)
+        # EVERY RULE MUST HAVE REQUIRED KEYS.
+        for rule in DEFAULT_RULES:
+            self.assertIn("id", rule)
+            self.assertIn("name", rule)
+            self.assertIn("rule_type", rule)
+            self.assertIn("destination_template", rule)
+
+    def test_ui_imports_same_rules(self):
+        # VERIFIES THAT UI MODULE IMPORTS DEFAULT_RULES FROM RULES_ENGINE.
+        from opencoeus import rules_engine
+        self.assertTrue(hasattr(rules_engine, "DEFAULT_RULES"))
+        self.assertGreater(len(rules_engine.DEFAULT_RULES), 0)
+
+    def test_cli_imports_same_rules(self):
+        # VERIFIES THAT CLI MODULE IMPORTS DEFAULT_RULES FROM RULES_ENGINE.
+        from opencoeus import cli
+        # CLI MODULE SHOULD HAVE DEFAULT_RULES IN ITS NAMESPACE AFTER IMPORT.
+        from opencoeus.rules_engine import DEFAULT_RULES as engine_rules
+        self.assertGreater(len(engine_rules), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

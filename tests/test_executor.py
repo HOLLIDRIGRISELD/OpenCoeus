@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 
 from opencoeus.database import AuditStore
@@ -8,12 +9,15 @@ from opencoeus.executor import (
     cleanup_empty_folders,
     cleanup_holding_area,
     create_holding_area,
+    execute_batch,
     get_holding_dir,
     pre_execution_check,
+    recover_crashed_batches,
     resolve_collision,
     rollback_partial,
     rollback_remaining,
     safe_move,
+    undo_batch,
     verify_file_integrity,
 )
 from opencoeus.hashing import sha256_file
@@ -345,6 +349,284 @@ class CleanupEmptyFoldersTests(unittest.TestCase):
             self.assertEqual(removed, 2)
             self.assertFalse(child.exists())
             self.assertFalse(parent.exists())
+
+
+class ExecuteBatchTests(unittest.TestCase):
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def test_execute_batch_single_file(self):
+        # VERIFIES FULL EXECUTION FLOW: SINGLE FILE MOVED FROM SOURCE TO DESTINATION.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Exec Single")
+                src = Path(tmp) / "source.txt"
+                src.write_text("hello world")
+                dest = Path(tmp) / "dest_dir" / "source.txt"
+                batch = store.create_batch(profile.id, "single test")
+                store.add_entry(batch.id, None, "move", str(src), str(dest),
+                                source_hash=sha256_file(src), source_size=src.stat().st_size)
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.completed, 1)
+                self.assertEqual(result.failed, 0)
+                self.assertTrue(dest.exists())
+                self.assertFalse(src.exists())
+                self.assertEqual(dest.read_text(), "hello world")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_execute_batch_multiple_files(self):
+        # VERIFIES FULL EXECUTION FLOW: MULTIPLE FILES MOVED SUCCESSFULLY.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Exec Multi")
+                src1 = Path(tmp) / "a.txt"
+                src2 = Path(tmp) / "b.txt"
+                src3 = Path(tmp) / "c.txt"
+                src1.write_text("aaa")
+                src2.write_text("bbb")
+                src3.write_text("ccc")
+                dest_dir = Path(tmp) / "output"
+                batch = store.create_batch(profile.id, "multi test")
+                for src in (src1, src2, src3):
+                    store.add_entry(batch.id, None, "move", str(src),
+                                    str(dest_dir / src.name),
+                                    source_hash=sha256_file(src), source_size=src.stat().st_size)
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.completed, 3)
+                self.assertEqual(result.failed, 0)
+                self.assertTrue((dest_dir / "a.txt").exists())
+                self.assertTrue((dest_dir / "b.txt").exists())
+                self.assertTrue((dest_dir / "c.txt").exists())
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_execute_batch_missing_source(self):
+        # VERIFIES PRE-FLIGHT DETECTS MISSING SOURCE FILE AND MARKS ENTRY FAILED.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Exec Missing")
+                missing = Path(tmp) / "nonexistent.txt"
+                dest = Path(tmp) / "dest.txt"
+                batch = store.create_batch(profile.id, "missing test")
+                store.add_entry(batch.id, None, "move", str(missing), str(dest))
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.failed, 1)
+                self.assertEqual(result.completed, 0)
+                entries = store.get_entries_by_batch(batch.id)
+                self.assertEqual(entries[0].status, "failed")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_execute_batch_concurrent_guard(self):
+        # VERIFIES SECOND CONCURRENT EXECUTE_BATCH RETURNS ERROR IMMEDIATELY.
+        import opencoeus.executor as executor_mod
+        import threading
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Concurrent")
+                batch = store.create_batch(profile.id, "concurrent test")
+                # ACQUIRE THE LOCK MANUALLY TO SIMULATE CONCURRENT EXECUTION.
+                executor_mod._batch_lock.acquire()
+                try:
+                    result = execute_batch(batch.id, store)
+                    self.assertEqual(len(result.errors), 1)
+                    self.assertIn("already executing", result.errors[0])
+                finally:
+                    executor_mod._batch_lock.release()
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_execute_batch_no_pending(self):
+        # VERIFIES BATCH WITH NO PENDING ENTRIES RETURNS SKIPPED.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("No Pending")
+                batch = store.create_batch(profile.id)
+                entry = store.add_entry(batch.id, None, "move", "/a.txt", "/b.txt")
+                store.update_entry(entry.id, status="completed")
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.skipped, 1)
+                self.assertEqual(result.completed, 0)
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_execute_batch_empty_batch(self):
+        # VERIFIES BATCH WITH ZERO ENTRIES RETURNS IMMEDIATELY.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Empty")
+                batch = store.create_batch(profile.id)
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.total, 0)
+                self.assertEqual(result.skipped, 0)
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+
+class UndoBatchTests(unittest.TestCase):
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def test_undo_restores_files(self):
+        # VERIFIES UNDO MOVES FILES FROM DESTINATION BACK TO SOURCE.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Undo Test")
+                src = Path(tmp) / "original.txt"
+                src.write_text("content")
+                dest = Path(tmp) / "moved.txt"
+                batch = store.create_batch(profile.id)
+                entry = store.add_entry(batch.id, None, "move", str(src), str(dest))
+                # SIMULATE COMPLETED STATE.
+                store.update_entry(entry.id, status="completed", destination_path=str(dest),
+                                   executed_at=datetime.now(UTC).replace(tzinfo=None))
+                store.mark_batch(batch.id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
+                dest.write_text("content")
+                errors = undo_batch(batch.id, store)
+                self.assertEqual(len(errors), 0)
+                self.assertTrue(src.exists())
+                self.assertFalse(dest.exists())
+                self.assertEqual(src.read_text(), "content")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_undo_missing_destination(self):
+        # VERIFIES UNDO HANDLES MISSING DESTINATION FILES GRACEFULLY.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Undo Missing")
+                src = Path(tmp) / "original.txt"
+                dest = Path(tmp) / "deleted.txt"
+                batch = store.create_batch(profile.id)
+                entry = store.add_entry(batch.id, None, "move", str(src), str(dest))
+                store.update_entry(entry.id, status="completed", destination_path=str(dest),
+                                   executed_at=datetime.now(UTC).replace(tzinfo=None))
+                store.mark_batch(batch.id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
+                errors = undo_batch(batch.id, store)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("missing", errors[0])
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_undo_empty_batch(self):
+        # VERIFIES UNDO ON BATCH WITH NO COMPLETED ENTRIES RETURNS ERROR.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Undo Empty")
+                batch = store.create_batch(profile.id)
+                errors = undo_batch(batch.id, store)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("No completed entries", errors[0])
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+
+class RecoverCrashedBatchesTests(unittest.TestCase):
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def test_recover_executing_batch(self):
+        # VERIFIES BATCH STUCK IN EXECUTING IS MARKED FAILED.
+        store = self._make_store()
+        profile = store.create_profile("Crash Test")
+        batch = store.create_batch(profile.id)
+        entry = store.add_entry(batch.id, None, "move", "/a.txt", "/b.txt")
+        # SET BATCH TO EXECUTING AND ENTRY TO MOVED_TO_HOLDING.
+        store.mark_batch(batch.id, "executing")
+        store.update_entry(entry.id, status="moved_to_holding", holding_path="/holding/b.txt")
+        recovered = recover_crashed_batches(store)
+        self.assertEqual(recovered, 1)
+        # VERIFY STATUS WAS UPDATED.
+        from opencoeus.models import TransactionBatch, TransactionEntry
+        from sqlalchemy import select
+        with store.session_factory() as session:
+            batch_obj = session.scalar(select(TransactionBatch).where(TransactionBatch.id == batch.id))
+            self.assertEqual(batch_obj.status, "failed")
+            entry_obj = session.scalar(select(TransactionEntry).where(TransactionEntry.id == entry.id))
+            self.assertEqual(entry_obj.status, "failed")
+
+    def test_recover_nothing_to_recover(self):
+        # VERIFIES NO RECOVERY NEEDED WHEN NO EXECUTING BATCHES EXIST.
+        store = self._make_store()
+        profile = store.create_profile("No Crash")
+        batch = store.create_batch(profile.id)
+        store.mark_batch(batch.id, "completed")
+        recovered = recover_crashed_batches(store)
+        self.assertEqual(recovered, 0)
+
+
+class BatchStatusEnumTests(unittest.TestCase):
+    def test_batch_status_values(self):
+        # VERIFIES BATCHSTATUS ENUM HAS CORRECT STRING VALUES.
+        from opencoeus.models import BatchStatus
+        self.assertEqual(BatchStatus.PENDING, "pending")
+        self.assertEqual(BatchStatus.EXECUTING, "executing")
+        self.assertEqual(BatchStatus.COMPLETED, "completed")
+        self.assertEqual(BatchStatus.FAILED, "failed")
+        self.assertEqual(BatchStatus.UNDONE, "undone")
+
+    def test_entry_status_values(self):
+        # VERIFIES ENTRYSTATUS ENUM HAS CORRECT STRING VALUES.
+        from opencoeus.models import EntryStatus
+        self.assertEqual(EntryStatus.PENDING, "pending")
+        self.assertEqual(EntryStatus.MOVED_TO_HOLDING, "moved_to_holding")
+        self.assertEqual(EntryStatus.COMPLETED, "completed")
+        self.assertEqual(EntryStatus.FAILED, "failed")
+        self.assertEqual(EntryStatus.UNDONE, "undone")
 
 
 if __name__ == "__main__":

@@ -1013,5 +1013,34 @@ class EnsureColumnsTests(unittest.TestCase):
             store.close()
 
 
+class DeleteProfileCascadeTests(unittest.TestCase):
+    def test_delete_cascades_batches_and_entries(self):
+        # VERIFIES THAT DELETING A PROFILE ALSO DELETES ASSOCIATED BATCHES AND ENTRIES.
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "cascade.sqlite3"
+            store = AuditStore(f"sqlite:///{db_path.as_posix()}")
+            profile = store.create_profile("Cascade Delete")
+            batch = store.create_batch(profile.id, "cascade batch")
+            entry = store.add_entry(batch.id, None, "move", "/a.txt", "/b.txt")
+            self.assertGreater(batch.id, 0)
+            self.assertGreater(entry.id, 0)
+            # DELETE THE PROFILE.
+            result = store.delete_profile(profile.id)
+            self.assertTrue(result)
+            # VERIFY BATCHES AND ENTRIES ARE DELETED.
+            from sqlalchemy import select
+            from opencoeus.models import TransactionBatch, TransactionEntry
+            with store.session_factory() as session:
+                remaining_batches = list(session.scalars(
+                    select(TransactionBatch).where(TransactionBatch.scan_profile_id == profile.id)
+                ).all())
+                remaining_entries = list(session.scalars(
+                    select(TransactionEntry).where(TransactionEntry.batch_id == batch.id)
+                ).all())
+                self.assertEqual(len(remaining_batches), 0)
+                self.assertEqual(len(remaining_entries), 0)
+            store.close()
+
+
 if __name__ == "__main__":
     unittest.main()
