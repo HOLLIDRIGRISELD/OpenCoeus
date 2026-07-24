@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,8 @@ from .folder_tree import FolderNode, build_folder_tree, flatten_tree
 from .hashing import sha256_file
 from .safety import is_protected
 from .scanner import FileRecord, iter_files
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,6 +62,7 @@ class ScanEngine:
                       profile_id: int = 1) -> ScanResult:
         # PHASE 1: DISCOVERS THE FOLDER TREE AND CLASSIFIES EVERY FOLDER.
         scan_result = ScanResult()
+        logger.info("Phase 1: scanning %s", self.settings.root)
         merged_patterns = self.settings.protected_patterns + (custom_patterns or [])
         folder_tree_root = build_folder_tree(
             self.settings.root,
@@ -68,6 +72,7 @@ class ScanEngine:
         scan_result.classifications = classify_tree(folder_tree_root, custom_patterns)
         scan_result.folder_tree_flat = flatten_tree(folder_tree_root)
         self.store.save_classifications(profile_id, scan_result.classifications)
+        logger.info("Phase 1 complete: %d folders classified", len(scan_result.classifications))
         return scan_result
 
     def run_phase_two(self, excluded_folders: set[str] | None = None,
@@ -76,8 +81,10 @@ class ScanEngine:
                       extract_documents: bool | None = None) -> ScanResult:
         # PHASE 2: SCANS FILES WITHIN NON-EXCLUDED FOLDERS AND DETECTS DUPLICATES.
         scan_result = ScanResult()
+        logger.info("Phase 2: scanning files in %s", self.settings.root)
         effective_extract = extract_documents if extract_documents is not None else self.settings.extract_documents
         self._scan_files(scan_result, progress_callback, excluded_folders, included_folders, effective_extract)
+        logger.info("Phase 2 complete: %d files, %d duplicates", len(scan_result.rows), scan_result.duplicate_count)
         return scan_result
 
     def _scan_files(self, scan_result: ScanResult, progress_callback: Callable[[str], None] | None = None,

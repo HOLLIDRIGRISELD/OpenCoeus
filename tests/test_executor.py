@@ -124,9 +124,11 @@ class VerifyFileIntegrityTests(unittest.TestCase):
 
 class HoldingAreaTests(unittest.TestCase):
     def test_get_holding_dir(self):
-        # VERIFIES THAT THE HOLDING DIR PATH IS CORRECT.
+        # VERIFIES THAT THE HOLDING DIR PATH USES THE APPLICATION DATA DIRECTORY.
+        from opencoeus.config import default_application_data_directory
+        expected_root = default_application_data_directory() / "transactions"
         result = get_holding_dir(42)
-        self.assertEqual(result, Path.home() / ".opencoeus" / "transactions" / "42")
+        self.assertEqual(result, expected_root / "42")
 
     def test_create_holding_area(self):
         # VERIFIES THAT THE HOLDING DIRECTORY IS CREATED.

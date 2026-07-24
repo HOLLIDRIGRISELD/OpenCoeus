@@ -8,12 +8,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .config import default_application_data_directory
 from .database import AuditStore
 from .hashing import sha256_file
 from .models import BatchStatus, EntryStatus, TransactionEntry
 
 
-HOLDING_ROOT = Path.home() / ".opencoeus" / "transactions"
+# HOLDING AREA STORED IN THE APPLICATION DATA DIRECTORY (CONSISTENT WITH DATABASE).
+HOLDING_ROOT = default_application_data_directory() / "transactions"
 
 # MODULE-LEVEL LOCK TO PREVENT CONCURRENT BATCH EXECUTION.
 _batch_lock = threading.Lock()

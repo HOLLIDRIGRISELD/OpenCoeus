@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 
 def extract_text(document_path: Path, maximum_pages: int = 2) -> str:
+    logger.debug("Extracting text from %s", document_path)
     try:
         if document_path.suffix.lower() == ".pdf":
             from pypdf import PdfReader
@@ -14,7 +18,8 @@ def extract_text(document_path: Path, maximum_pages: int = 2) -> str:
             from docx import Document
             word_document = Document(str(document_path))
             return "\n".join(paragraph.text for paragraph in word_document.paragraphs[:80])
-    except Exception:
+    except Exception as exc:
+        logger.warning("Text extraction failed for %s: %s", document_path, exc)
         return ""
     return ""
 
