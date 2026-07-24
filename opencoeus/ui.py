@@ -1201,7 +1201,7 @@ class MainWindow(QMainWindow):
         profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
         actions_data = [
             {"original_path": m.original_path, "proposed_path": m.proposed_path,
-             "action_type": m.action_type, "rule_id": m.rule_id}
+             "action_type": m.action_type, "rule_id": m.rule_id, "reason": m.reason}
             for m in matches
         ]
         self.store.save_proposed_actions(profile_id, actions_data)
@@ -1284,6 +1284,9 @@ class MainWindow(QMainWindow):
     def _reject_selected(self) -> None:
         rows_to_remove = sorted({idx.row() for idx in self.actions_table.selectedIndexes()}, reverse=True)
         for r in rows_to_remove:
+            action_id = self.actions_table.item(r, 0).data(Qt.ItemDataRole.UserRole) if self.actions_table.item(r, 0) else None
+            if action_id:
+                self.store.reject_action(action_id)
             self.actions_table.removeRow(r)
         self._sync_proposed_matches_from_table()
         self._refresh_actions_count()

@@ -290,6 +290,7 @@ class AuditStore:
                     proposed_path=action_data["proposed_path"],
                     action_type=action_data["action_type"],
                     rule_id=action_data.get("rule_id"),
+                    reason=action_data.get("reason", ""),
                 ))
             session.commit()
 
@@ -307,6 +308,16 @@ class AuditStore:
             if action is None:
                 return False
             action.approved = True
+            session.commit()
+            return True
+
+    def reject_action(self, action_id: int) -> bool:
+        # REMOVES A PROPOSED ACTION BY ITS ID (REJECTION).
+        with self.session_factory() as session:
+            action = session.scalar(select(ProposedAction).where(ProposedAction.id == action_id))
+            if action is None:
+                return False
+            session.delete(action)
             session.commit()
             return True
 

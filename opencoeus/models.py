@@ -91,6 +91,7 @@ class ProposedAction(Base):
     proposed_path: Mapped[str] = mapped_column(Text)
     action_type: Mapped[str] = mapped_column(String(32))
     rule_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("organization_rules.id"), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     applied: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))

@@ -39,7 +39,7 @@ class RulesEngine:
         profile_included = self.profile.included_folders if self.profile else []
         matches: list[RuleMatch] = []
         for row in manifest_rows:
-            if row.status in {"duplicate", "unreadable"}:
+            if row.status in {"duplicate", "unreadable", "protected"}:
                 continue
             if profile_excluded and any(row.folder_path.startswith(ex) for ex in profile_excluded):
                 continue
