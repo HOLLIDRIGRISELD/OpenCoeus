@@ -6,7 +6,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-COMMON_PROTECTED_PATTERNS = [r"^\.opencoeus$"]
+COMMON_PROTECTED_PATTERNS = [
+    r"^\.opencoeus$",
+    r"^\.git$",
+    r"^node_modules$",
+    r"^\.?venv$",
+    r"^env$",
+    r"^__pycache__$",
+    r"^\.pytest_cache$",
+    r"^\.mypy_cache$",
+]
 
 PLATFORM_PROTECTED_PATTERNS = {
     "Windows": [

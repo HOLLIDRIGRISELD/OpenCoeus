@@ -23,8 +23,9 @@ class RulesEngine:
     # DETERMINISTIC RULES ENGINE THAT PROPOSES FILE ACTIONS WITHOUT AI.
     # APPLIES EXTENSION, PATTERN, DATE, SIZE, AND FOLDER-BASED RULES IN PRIORITY ORDER.
 
-    def __init__(self, profile: ProfileConfig) -> None:
+    def __init__(self, profile: ProfileConfig, scan_root: str = "") -> None:
         self.profile = profile
+        self.scan_root = scan_root.rstrip("/").rstrip("\\")
 
     def evaluate(self, manifest_rows: list[ManifestRow], rules: list[dict]) -> list[RuleMatch]:
         # EVALUATES ALL ENABLED RULES AGAINST EVERY MANIFEST ROW AND COLLECTS MATCHES.
@@ -39,7 +40,7 @@ class RulesEngine:
         profile_included = self.profile.included_folders if self.profile else []
         matches: list[RuleMatch] = []
         for row in manifest_rows:
-            if row.status in {"duplicate", "unreadable", "protected"}:
+            if row.status in {"unreadable", "protected"}:
                 continue
             if profile_excluded and any(row.folder_path.startswith(ex) for ex in profile_excluded):
                 continue
@@ -51,7 +52,8 @@ class RulesEngine:
                 if self._rule_matches(row, rule):
                     match = self._apply_rule(row, rule)
                     if match is not None:
-                        matches.append(match)
+                        if match.proposed_path != match.original_path:
+                            matches.append(match)
                         break
         return matches
 
@@ -69,6 +71,10 @@ class RulesEngine:
             return self._matches_size(row, config)
         if rule_type == "folder":
             return self._matches_folder(row, config)
+        if rule_type == "status":
+            return self._matches_status(row, config)
+        if rule_type == "always":
+            return True
         return False
 
     def _matches_extension(self, row: ManifestRow, config: dict) -> bool:
@@ -117,6 +123,10 @@ class RulesEngine:
             for pattern in folder_patterns
         )
 
+    def _matches_status(self, row: ManifestRow, config: dict) -> bool:
+        # CHECKS WHETHER THE FILE'S STATUS MATCHES THE RULE'S REQUIRED STATUS VALUE.
+        return row.status == config.get("status", "")
+
     def _apply_rule(self, row: ManifestRow, rule: dict) -> RuleMatch | None:
         # APPLIES A MATCHING RULE AND RETURNS A RuleMatch WITH THE PROPOSED DESTINATION PATH.
         destination_template = rule.get("destination_template", "")
@@ -143,5 +153,6 @@ class RulesEngine:
         result = result.replace("{stem}", stem)
         result = result.replace("{extension}", extension.lstrip("."))
         result = result.replace("{folder}", folder)
+        result = result.replace("{root}", self.scan_root)
         result = result.replace("{date_year}", row.modified_at[:4] if row.modified_at else "unknown")
         return result

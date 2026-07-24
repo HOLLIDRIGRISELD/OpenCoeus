@@ -29,28 +29,34 @@ from .rules_engine import RulesEngine, RuleMatch
 DEFAULT_RULES = [
     {"id": 1, "name": "Documents", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".pdf", ".docx", ".doc", ".xlsx", ".pptx", ".txt", ".rtf", ".odt"]}',
-     "destination_template": "{folder}/Documents/{filename}", "action_type": "move"},
-    {"id": 2, "name": "Images", "rule_type": "extension", "enabled": True, "priority": 10,
+     "destination_template": "{root}/Documents/{filename}", "action_type": "move"},
+    {"id": 2, "name": "Photos", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff"]}',
-     "destination_template": "{folder}/Images/{filename}", "action_type": "move"},
-    {"id": 3, "name": "Audio", "rule_type": "extension", "enabled": True, "priority": 10,
+     "destination_template": "{root}/Photos/{filename}", "action_type": "move"},
+    {"id": 3, "name": "Music", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a"]}',
-     "destination_template": "{folder}/Audio/{filename}", "action_type": "move"},
+     "destination_template": "{root}/Music/{filename}", "action_type": "move"},
     {"id": 4, "name": "Video", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"]}',
-     "destination_template": "{folder}/Video/{filename}", "action_type": "move"},
+     "destination_template": "{root}/Video/{filename}", "action_type": "move"},
     {"id": 5, "name": "Archives", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"]}',
-     "destination_template": "{folder}/Archives/{filename}", "action_type": "move"},
+     "destination_template": "{root}/Archives/{filename}", "action_type": "move"},
     {"id": 6, "name": "Code", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".cs", ".rb", ".go", ".rs", ".html", ".css", ".json", ".xml", ".yaml", ".yml", ".toml"]}',
-     "destination_template": "{folder}/Code/{filename}", "action_type": "move"},
+     "destination_template": "{root}/Code/{filename}", "action_type": "move"},
     {"id": 7, "name": "Installers", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".msi", ".exe", ".dmg", ".deb", ".rpm", ".apk"]}',
-     "destination_template": "{folder}/Installers/{filename}", "action_type": "move"},
+     "destination_template": "{root}/Installers/{filename}", "action_type": "move"},
     {"id": 8, "name": "Old files archive", "rule_type": "date", "enabled": True, "priority": 50,
      "rule_config": '{"older_than_days": 365}',
-     "destination_template": "{folder}/Archive/{date_year}/{filename}", "action_type": "move"},
+     "destination_template": "{root}/Archive/{date_year}/{filename}", "action_type": "move"},
+    {"id": 9, "name": "Duplicate consolidation", "rule_type": "status", "enabled": True, "priority": 5,
+     "rule_config": '{"status": "duplicate"}',
+     "destination_template": "{root}/Duplicates/{filename}", "action_type": "move"},
+    {"id": 10, "name": "Uncategorized", "rule_type": "always", "enabled": True, "priority": 100,
+     "rule_config": "{}",
+     "destination_template": "{root}/Other/{filename}", "action_type": "move"},
 ]
 
 COLORS = {
@@ -131,7 +137,7 @@ class PhaseTwoWorker(QThread):
                 included_folders=included,
                 extract_documents=doc_extract,
             )
-            rules_engine = RulesEngine(self.profile)
+            rules_engine = RulesEngine(self.profile, scan_root=self.selected_folder.as_posix())
             matches = rules_engine.evaluate(scan_result.rows, self.rules)
             self.finished_scan.emit(scan_result, matches)
         except Exception as exc:
