@@ -1,4 +1,4 @@
-# OpenCoeus
+﻿# OpenCoeus
 
 OpenCoeus is an offline-first Data Lifecycle Management desktop application and intelligent file manager for Windows, macOS, and Linux. It is designed to safely analyse, deduplicate, rename, and reorganise large local folders, drives, and server shares without cloud services.
 
@@ -29,10 +29,10 @@ For the complete product scope, implemented capabilities, safety policy, and sta
 
 ### Rules-based organisation
 - Deterministic rules engine that evaluates files against user-defined or default rules.
-- Rule types: extension, filename pattern, date (older/newer than N days), size range, and folder path.
-- 8 default rules: Documents, Images, Audio, Video, Archives, Code, Installers, and Old files archive.
-- Priority-based first-match-wins evaluation with pre-parsed configurations.
-- Destination templates with `{filename}`, `{stem}`, `{extension}`, `{folder}`, and `{date_year}` placeholders.
+- Rule types: extension, filename pattern, date (older/newer than N days), size range, folder path, status, and always-match.
+- 11 default rules: Documents, Photos, Music, Video, Compressed, Code, Installers, Old files archive, Duplicate consolidation, Uncategorized, and Spreadsheets.
+- Priority-based first-match-wins evaluation with pre-parsed configurations and compiled regex.
+- Destination templates with {filename}, {stem}, {extension}, {folder}, {root}, and {date_year} placeholders.
 
 ### Results and action management
 - Results table with 7 columns: Path, Size, Status, Duplicate of, Title, Extension, Folder.
@@ -48,6 +48,16 @@ For the complete product scope, implemented capabilities, safety policy, and sta
 - Background QThread workers for non-blocking UI.
 - Throttled progress callbacks and buffered log output.
 
+### Execution engine
+- Execute approved file moves with atomic collision detection and resolution.
+- Two-phase transaction: source to holding area, then holding area to destination.
+- Pre-flight hash and size verification before execution.
+- Crash recovery for batches stuck in executing status.
+- Thread-safe execution with module-level lock preventing concurrent batches.
+- Partial rollback: if one file fails, remaining holding-area files are restored to source.
+- Full undo: reverse all completed entries in a batch, restoring files to original locations.
+- Batch history table with entry counts and status indicators.
+
 ### Desktop interface
 - Modern dark theme with sidebar-based navigation (6 pages: Home, Folders, Results, Actions, Rules, Log).
 - Home dashboard with stat cards (Folders, Files, Duplicates, Actions) and profile management.
@@ -58,12 +68,12 @@ For the complete product scope, implemented capabilities, safety policy, and sta
 - Table sorting with clickable column headers.
 
 ### Command-line interface
-- `scan` — single-phase scan with CSV manifest export.
-- `profile` — create, list, show, and delete scan profiles.
-- `classify` — build folder tree and classify folders with optional JSON export.
-- `organize` — full two-phase pipeline: classify, scan, apply rules, export proposed actions.
-- `execute` — execute approved file actions with optional dry-run mode.
-- `undo` — reverse the last executed batch of file moves.
+- scan - single-phase scan with CSV manifest export.
+- profile - create, list, show, and delete scan profiles.
+- classify - build folder tree and classify folders with optional JSON export.
+- organize - full two-phase pipeline: classify, scan, apply rules, export proposed actions.
+- execute - execute approved file actions with optional dry-run mode.
+- undo - reverse the last executed batch of file moves.
 
 ## Quick start
 
@@ -71,74 +81,74 @@ For the complete product scope, implemented capabilities, safety policy, and sta
 
 Windows PowerShell:
 
-```powershell
+`powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
+`
 
 macOS or Linux:
 
-```bash
+`ash
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-```
+`
 
 ### Launch the desktop application
 
-```bash
+`ash
 python -m opencoeus.ui
-```
+`
 
 ### CLI examples
 
 Scan a folder and export a CSV manifest:
 
-```bash
+`ash
 python -m opencoeus.cli scan "D:\YourFolder" --output scan-manifest.csv
-```
+`
 
 Classify folders in a directory:
 
-```bash
+`ash
 python -m opencoeus.cli classify "D:\YourFolder" --output classifications.json
-```
+`
 
 Manage scan profiles:
 
-```bash
+`ash
 python -m opencoeus.cli profile create "My Drive" --root "D:\"
 python -m opencoeus.cli profile list
 python -m opencoeus.cli profile show "My Drive"
 python -m opencoeus.cli profile delete "My Drive"
-```
+`
 
 Run the full two-phase organise pipeline with proposed actions:
 
-```bash
+`ash
 python -m opencoeus.cli organize "D:\YourFolder" --output actions.csv --profile "My Drive"
-```
+`
 
-The `organize` command runs Phase 1 (classify folders), Phase 2 (scan files with exclusions), applies the rules engine, and exports proposed file actions. It never moves or removes files — every action requires explicit approval in the UI.
+The organize command runs Phase 1 (classify folders), Phase 2 (scan files with exclusions), applies the rules engine, and exports proposed file actions. It never moves or removes files - every action requires explicit approval in the UI.
 
 Execute approved file actions (after approving in the UI):
 
-```bash
+`ash
 python -m opencoeus.cli execute --profile "My Drive"
-```
+`
 
 Dry run (show what would be done without executing):
 
-```bash
+`ash
 python -m opencoeus.cli execute --profile "My Drive" --dry-run
-```
+`
 
 Undo the last executed batch:
 
-```bash
+`ash
 python -m opencoeus.cli undo --profile "My Drive"
-```
+`
 
 ## Package the desktop application
 
@@ -146,15 +156,15 @@ Build on the operating system you intend to distribute to. PyInstaller packages 
 
 Windows:
 
-```powershell
+`powershell
 python -m PyInstaller --noconfirm --windowed --name OpenCoeus --collect-all pypdf --collect-all docx --collect-all sklearn -m opencoeus.ui
-```
+`
 
 macOS and Linux:
 
-```bash
+`ash
 python -m PyInstaller --noconfirm --windowed --name OpenCoeus --collect-all pypdf --collect-all docx --collect-all sklearn -m opencoeus.ui
-```
+`
 
 ## Database location
 
@@ -162,7 +172,7 @@ The local database is created in the platform's normal per-user data location:
 
 - **Windows:** `%LOCALAPPDATA%\OpenCoeus`
 - **macOS:** `~/Library/Application Support/OpenCoeus`
-- **Linux:** `$XDG_STATE_HOME/OpenCoeus` or `~/.local/state/OpenCoeus`
+- **Linux:** `/OpenCoeus` or `~/.local/state/OpenCoeus`
 
 If that location is read-only, it falls back to `.opencoeus` in the working folder. Set `OPENCOEUS_DATA_DIR` to choose an explicit location. No network connection is used by this application.
 
@@ -170,7 +180,7 @@ If that location is read-only, it falls back to `.opencoeus` in the working fold
 
 Stage 3 (execute approved changes and recovery) is complete. The next release focuses on spreadsheet workflows:
 
-1. Define supported spreadsheet schemas before enabling `.xlsx` or `.xlsm` consolidation.
+1. Define supported spreadsheet schemas before enabling .xlsx or .xlsm consolidation.
 2. Implement read-only spreadsheet inspection, followed by an approved master-workbook workflow.
 3. Build, package, and test on clean offline Windows, macOS, and Linux machines.
 
