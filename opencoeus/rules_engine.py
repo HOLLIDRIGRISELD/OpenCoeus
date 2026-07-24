@@ -178,8 +178,10 @@ class RulesEngine:
 
     def _matches_size(self, row: ManifestRow, config: dict) -> bool:
         # CHECKS WHETHER THE FILE SIZE FALLS WITHIN THE RULE'S MIN/MAX SIZE RANGE.
-        min_bytes = config.get("min_bytes", 0)
-        max_bytes = config.get("max_bytes", float("inf"))
+        min_bytes = config.get("min_bytes") or 0
+        max_bytes = config.get("max_bytes")
+        if max_bytes is None or max_bytes == "":
+            max_bytes = float("inf")
         return min_bytes <= row.size <= max_bytes
 
     def _matches_folder(self, row: ManifestRow, rule: dict) -> bool:

@@ -463,6 +463,27 @@ class AuditStore:
                 stmt = stmt.where(TransactionBatch.scan_profile_id == profile_id)
             return list(session.scalars(stmt.order_by(TransactionBatch.id.desc())).all())
 
+    def get_all_batches(self, profile_id: int | None = None, limit: int = 20) -> list[TransactionBatch]:
+        # RETURNS ALL BATCHES IN REVERSE ORDER FOR THE BATCH HISTORY TABLE.
+        with self.session_factory() as session:
+            stmt = select(TransactionBatch)
+            if profile_id is not None:
+                stmt = stmt.where(TransactionBatch.scan_profile_id == profile_id)
+            return list(session.scalars(stmt.order_by(TransactionBatch.id.desc()).limit(limit)).all())
+
+    def get_batch_entry_counts(self, batch_ids: list[int]) -> dict[int, int]:
+        # RETURNS ENTRY COUNTS FOR MULTIPLE BATCHES IN A SINGLE QUERY (AVOIDS N+1).
+        if not batch_ids:
+            return {}
+        from sqlalchemy import func
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(TransactionEntry.batch_id, func.count(TransactionEntry.id))
+                .where(TransactionEntry.batch_id.in_(batch_ids))
+                .group_by(TransactionEntry.batch_id)
+            ).all()
+            return {batch_id: count for batch_id, count in rows}
+
     def get_latest_completed_batch(self, profile_id: int) -> TransactionBatch | None:
         # RETURNS THE MOST RECENTLY COMPLETED BATCH FOR A PROFILE.
         with self.session_factory() as session:
@@ -474,6 +495,11 @@ class AuditStore:
                 )
                 .order_by(TransactionBatch.id.desc())
             )
+
+    def get_batch(self, batch_id: int) -> TransactionBatch | None:
+        # RETURNS A SINGLE BATCH BY ID.
+        with self.session_factory() as session:
+            return session.get(TransactionBatch, batch_id)
 
     def delete_proposed_actions_by_ids(self, action_ids: list[int]) -> int:
         # DELETES SPECIFIC PROPOSED ACTIONS BY THEIR IDS (REJECTION). RETURNS COUNT DELETED.

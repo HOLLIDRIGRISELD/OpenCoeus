@@ -629,5 +629,352 @@ class BatchStatusEnumTests(unittest.TestCase):
         self.assertEqual(EntryStatus.UNDONE, "undone")
 
 
+class EndToEndExecuteUndoRoundTripTests(unittest.TestCase):
+    """E2E: EXECUTE A BATCH THEN UNDO IT — VERIFY FILES RESTORED TO ORIGINAL LOCATIONS."""
+
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def test_execute_then_undo_round_trip(self):
+        # THREE FILES MOVED, THEN UNDO RESTORES ALL THREE.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Round Trip")
+                src_dir = Path(tmp) / "source"
+                src_dir.mkdir()
+                dest_dir = Path(tmp) / "dest"
+                files = {}
+                for name in ("doc.txt", "image.png", "data.csv"):
+                    f = src_dir / name
+                    f.write_text(f"content of {name}")
+                    files[name] = f
+                batch = store.create_batch(profile.id, "round trip test")
+                for src in files.values():
+                    store.add_entry(
+                        batch.id, None, "move", str(src),
+                        str(dest_dir / src.name),
+                        source_hash=sha256_file(src), source_size=src.stat().st_size,
+                    )
+                # EXECUTE.
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.completed, 3)
+                self.assertEqual(result.failed, 0)
+                for name in files:
+                    self.assertTrue((dest_dir / name).exists(), f"{name} should be in dest")
+                    self.assertFalse(files[name].exists(), f"{name} should NOT be in source")
+                # UNDO.
+                errors = undo_batch(batch.id, store)
+                self.assertEqual(len(errors), 0)
+                for name in files:
+                    self.assertTrue(files[name].exists(), f"{name} should be restored to source")
+                    self.assertEqual(files[name].read_text(), f"content of {name}")
+                    self.assertFalse((dest_dir / name).exists(), f"{name} should NOT remain in dest")
+                # VERIFY DB STATE.
+                from opencoeus.models import EntryStatus, BatchStatus
+                entries = store.get_entries_by_batch(batch.id)
+                for entry in entries:
+                    self.assertEqual(entry.status, EntryStatus.UNDONE)
+                batch_obj = store.get_batch(batch.id)
+                self.assertEqual(batch_obj.status, BatchStatus.UNDONE)
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_undo_after_partial_failure(self):
+        # ONE FILE MISSING AT DESTINATION — UNDO HANDLES IT AND RETURNS ERROR.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Partial Undo")
+                src = Path(tmp) / "file.txt"
+                src.write_text("round trip partial")
+                dest = Path(tmp) / "moved.txt"
+                batch = store.create_batch(profile.id)
+                entry = store.add_entry(batch.id, None, "move", str(src), str(dest))
+                store.update_entry(entry.id, status="completed", destination_path=str(dest),
+                                   executed_at=datetime.now(UTC).replace(tzinfo=None))
+                store.mark_batch(batch.id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
+                # DESTINATION DOES NOT EXIST (SIMULATING EXTERNAL DELETION).
+                errors = undo_batch(batch.id, store)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("missing", errors[0])
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+
+class PartialRollbackMidBatchTests(unittest.TestCase):
+    """E2E: PARTIAL ROLLBACK WHEN PHASE 2 (HOLDING→DEST) FAILS MID-BATCH."""
+
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def test_phase2_failure_triggers_rollback(self):
+        # THREE FILES: ALL MOVE TO HOLDING, THEN SECOND DESTINATION WRITE FAILS → ROLLBACK.
+        import opencoeus.executor as executor_mod
+        from unittest.mock import patch
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Partial Rollback")
+                src_dir = Path(tmp) / "src"
+                src_dir.mkdir()
+                dest_dir = Path(tmp) / "dest"
+                dest_dir.mkdir()
+                src1 = src_dir / "ok1.txt"
+                src2 = src_dir / "fail.txt"
+                src3 = src_dir / "ok3.txt"
+                src1.write_text("content1")
+                src2.write_text("content2")
+                src3.write_text("content3")
+                batch = store.create_batch(profile.id, "partial rollback")
+                for src in (src1, src2, src3):
+                    store.add_entry(
+                        batch.id, None, "move", str(src), str(dest_dir / src.name),
+                        source_hash=sha256_file(src), source_size=src.stat().st_size,
+                    )
+                # PATCH safe_move TO FAIL ONLY WHEN MOVING TO dest_dir/fail.txt.
+                _original_safe_move = executor_mod.safe_move
+
+                def patched_safe_move(src_path, dst_path):
+                    if dst_path.parent == dest_dir and dst_path.name == "fail.txt":
+                        raise OSError("Simulated write failure")
+                    return _original_safe_move(src_path, dst_path)
+
+                with patch.object(executor_mod, "safe_move", side_effect=patched_safe_move):
+                    result = execute_batch(batch.id, store)
+                # PARTIAL: AT LEAST ONE FAILED.
+                self.assertGreater(result.failed, 0)
+                self.assertGreater(result.completed, 0)
+                # ok1.txt COMPLETED PHASE 2 SUCCESSFULLY → STAYS AT DESTINATION.
+                self.assertFalse(src1.exists(), "ok1.txt was moved to dest")
+                self.assertTrue((dest_dir / "ok1.txt").exists(), "ok1.txt at dest")
+                # fail.txt FAILED IN PHASE 2 → ROLLBACK TO ORIGINAL SOURCE.
+                self.assertTrue(src2.exists(), "fail.txt should be restored")
+                self.assertEqual(src2.read_text(), "content2")
+                # ok3.txt WAS IN HOLDING, NOT YET IN PHASE 2 → ROLLBACK TO ORIGINAL SOURCE.
+                self.assertTrue(src3.exists(), "ok3.txt should be restored")
+                self.assertEqual(src3.read_text(), "content3")
+                # FAIL.TXT ENTRY SHOULD BE FAILED IN DB.
+                entries = store.get_entries_by_batch(batch.id)
+                fail_entry = [e for e in entries if "fail" in e.source_path][0]
+                self.assertEqual(fail_entry.status, "failed")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_phase1_failure_marks_correct_status(self):
+        # SOURCE FILE DELETED BETWEEN PRE-FLIGHT AND HOLDING MOVE → STATUS FAILED.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Phase1 Fail")
+                src = Path(tmp) / "vanish.txt"
+                src.write_text("ephemeral")
+                batch = store.create_batch(profile.id)
+                store.add_entry(
+                    batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
+                    source_hash=sha256_file(src), source_size=src.stat().st_size,
+                )
+                # DELETE SOURCE AFTER PRE-FLIGHT PASSES (RACE CONDITION).
+                src.unlink()
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.failed, 1)
+                self.assertEqual(result.completed, 0)
+                # ENTRY SHOULD BE FAILED IN DB.
+                entries = store.get_entries_by_batch(batch.id)
+                self.assertEqual(entries[0].status, "failed")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+
+class PreFlightHashMismatchDBTests(unittest.TestCase):
+    """E2E: PRE-FLIGHT HASH MISMATCH MARKS ENTRY FAILED IN DB."""
+
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def test_hash_mismatch_marks_failed_in_db(self):
+        # FILE IS MODIFIED BETWEEN SCAN AND EXECUTE — PRE-FLIGHT CATCHES IT.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Hash Mismatch")
+                src = Path(tmp) / "drift.txt"
+                src.write_text("original content")
+                original_hash = sha256_file(src)
+                original_size = src.stat().st_size
+                batch = store.create_batch(profile.id)
+                store.add_entry(
+                    batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
+                    source_hash=original_hash, source_size=original_size,
+                )
+                # MODIFY FILE AFTER "SCAN".
+                src.write_text("modified content")
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.failed, 1)
+                self.assertEqual(result.completed, 0)
+                self.assertEqual(result.total, 1)
+                # VERIFY DB STATE: ENTRY FAILED WITH HASH MISMATCH MESSAGE.
+                entries = store.get_entries_by_batch(batch.id)
+                self.assertEqual(entries[0].status, "failed")
+                self.assertIn("Hash mismatch", entries[0].error_message or "")
+                # SOURCE FILE SHOULD STILL EXIST (NEVER MOVED).
+                self.assertTrue(src.exists())
+                self.assertEqual(src.read_text(), "modified content")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_size_mismatch_marks_failed_in_db(self):
+        # FILE SIZE CHANGED BETWEEN SCAN AND EXECUTE — PRE-FLIGHT CATCHES IT.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Size Mismatch")
+                src = Path(tmp) / "grow.txt"
+                src.write_text("small")
+                batch = store.create_batch(profile.id)
+                store.add_entry(
+                    batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
+                    source_hash=sha256_file(src), source_size=999,
+                )
+                result = execute_batch(batch.id, store)
+                self.assertEqual(result.failed, 1)
+                entries = store.get_entries_by_batch(batch.id)
+                self.assertEqual(entries[0].status, "failed")
+                self.assertIn("Size mismatch", entries[0].error_message or "")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+
+class FullDBStateVerificationTests(unittest.TestCase):
+    """E2E: VERIFY COMPLETE DB STATE AFTER EXECUTION VIA run_execution."""
+
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def test_run_execution_full_state(self):
+        # TWO FILES: VERIFY BATCH STATUS, ENTRY STATUSES, DESTINATION PATHS, HASHES.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Full State")
+                src1 = Path(tmp) / "alpha.txt"
+                src2 = Path(tmp) / "beta.txt"
+                src1.write_text("alpha content")
+                src2.write_text("beta content")
+                dest_dir = Path(tmp) / "organized"
+                batch = store.create_batch(profile.id, "full state check")
+                for src in (src1, src2):
+                    store.add_entry(
+                        batch.id, None, "move", str(src), str(dest_dir / src.name),
+                        source_hash=sha256_file(src), source_size=src.stat().st_size,
+                    )
+                from opencoeus.journal import run_execution
+                result = run_execution(batch.id, store)
+                # VERIFY RESULT COUNTS.
+                self.assertEqual(result.total, 2)
+                self.assertEqual(result.completed, 2)
+                self.assertEqual(result.failed, 0)
+                self.assertEqual(result.skipped, 0)
+                self.assertEqual(result.batch_id, batch.id)
+                # VERIFY BATCH STATUS.
+                from opencoeus.models import BatchStatus, EntryStatus
+                batch_obj = store.get_batch(batch.id)
+                self.assertEqual(batch_obj.status, BatchStatus.COMPLETED)
+                self.assertIsNotNone(batch_obj.completed_at)
+                # VERIFY ENTRY STATUSES AND DESTINATION PATHS.
+                entries = store.get_entries_by_batch(batch.id)
+                for entry in entries:
+                    self.assertEqual(entry.status, EntryStatus.COMPLETED)
+                    self.assertIsNotNone(entry.executed_at)
+                    self.assertIsNotNone(entry.destination_path)
+                    self.assertEqual(entry.destination_path, str(dest_dir / Path(entry.source_path).name))
+                    self.assertIsNotNone(entry.destination_hash)
+                    self.assertNotEqual(entry.destination_hash, "")
+                # VERIFY DESTINATION HASH MATCHES SOURCE.
+                for entry in entries:
+                    actual_hash = sha256_file(Path(entry.destination_path))
+                    self.assertEqual(entry.destination_hash, actual_hash)
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_run_execution_mixed_results_state(self):
+        # ONE VALID FILE + ONE MISSING → MIXED COMPLETED/FAILED, BATCH STATUS COMPLETED.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            holding_tmp = Path(tmp) / "holding"
+            executor_mod.HOLDING_ROOT = holding_tmp
+            try:
+                store = self._make_store()
+                profile = store.create_profile("Mixed State")
+                good = Path(tmp) / "good.txt"
+                good.write_text("good content")
+                bad = Path(tmp) / "missing.txt"
+                dest_dir = Path(tmp) / "out"
+                batch = store.create_batch(profile.id, "mixed test")
+                store.add_entry(
+                    batch.id, None, "move", str(good), str(dest_dir / "good.txt"),
+                    source_hash=sha256_file(good), source_size=good.stat().st_size,
+                )
+                store.add_entry(
+                    batch.id, None, "move", str(bad), str(dest_dir / "missing.txt"),
+                    source_hash="", source_size=0,
+                )
+                from opencoeus.journal import run_execution
+                from opencoeus.models import BatchStatus
+                result = run_execution(batch.id, store)
+                self.assertEqual(result.completed, 1)
+                self.assertEqual(result.failed, 1)
+                # VERIFY BATCH STATUS IS COMPLETED (PARTIAL SUCCESS IS STILL COMPLETED).
+                batch_obj = store.get_batch(batch.id)
+                self.assertEqual(batch_obj.status, BatchStatus.COMPLETED)
+                # VERIFY EACH ENTRY'S STATUS.
+                entries = store.get_entries_by_batch(batch.id)
+                statuses = {Path(e.source_path).name: e.status for e in entries}
+                self.assertEqual(statuses["good.txt"], "completed")
+                self.assertEqual(statuses["missing.txt"], "failed")
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+
 if __name__ == "__main__":
     unittest.main()

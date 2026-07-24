@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from .config import ScanSettings
 from .database import AuditStore
 from .engine import ScanEngine, ScanResult, write_manifest
+from .executor import ExecutionResult
 from .folder_tree import FolderNode, build_folder_tree, build_node_index, set_folder_exclusion
 from .profiles import (
     ProfileConfig, create_profile, delete_profile, list_profiles,
@@ -139,10 +140,15 @@ class ExecutionWorker(QThread):
             result = run_execution(self.batch_id, self.store, lambda msg: self.message.emit(str(msg)))
             self.finished_execution.emit(result)
         except Exception as exc:
-            from .executor import ExecutionResult
-            self.finished_execution.emit(ExecutionResult(
-                batch_id=self.batch_id, errors=[f"Execution crashed: {exc}"]
-            ))
+            # BUILD RESULT WITHOUT LAZY IMPORT (avoids import failure inside except).
+            result = ExecutionResult.__new__(ExecutionResult)
+            result.total = 0
+            result.completed = 0
+            result.failed = 1
+            result.skipped = 0
+            result.errors = [f"Execution crashed: {exc}"]
+            result.batch_id = self.batch_id
+            self.finished_execution.emit(result)
 
 
 class UndoWorker(QThread):
@@ -1307,13 +1313,21 @@ class MainWindow(QMainWindow):
     #  THREAD CLEANUP                                                      #
     # ------------------------------------------------------------------ #
     def _cleanup_workers(self) -> None:
-        for worker in (self.phase_one_worker, self.phase_two_worker):
+        for worker in (self.phase_one_worker, self.phase_two_worker,
+                       self.execution_worker, self.undo_worker):
             if worker and worker.isRunning():
                 worker.blockSignals(True)
                 worker.quit()
-                worker.wait(2000)
+                worker.wait(3000)
         self.phase_one_worker = None
         self.phase_two_worker = None
+        self.execution_worker = None
+        self.undo_worker = None
+
+    def closeEvent(self, event) -> None:
+        # ENSURES ALL WORKER THREADS ARE STOPPED BEFORE CLOSING THE WINDOW.
+        self._cleanup_workers()
+        event.accept()
 
     # ------------------------------------------------------------------ #
     #  ACTIONS TABLE CONTROLS                                              #
@@ -1383,6 +1397,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _execute_approved(self) -> None:
         # PREPARES AND EXECUTES ALL APPROVED ACTIONS.
+        # GUARD: PREVENT DOUBLE-ACTIVATION.
+        if self.execution_worker and self.execution_worker.isRunning():
+            return
         profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
         approved_count = sum(
             1 for r in range(self.actions_table.rowCount())
@@ -1397,28 +1414,42 @@ class MainWindow(QMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        # SHOW PROGRESS BAR BEFORE BLOCKING ON prepare_execution.
+        self.progress_bar.show()
+        self._status.showMessage("Preparing execution...")
+        self.execute_btn.setEnabled(False)
+        self.undo_btn.setEnabled(False)
         from .journal import prepare_execution
         batch_id, count = prepare_execution(
             self.store, profile_id, f"{approved_count} file moves from UI"
         )
         if batch_id == 0:
+            self.progress_bar.hide()
+            self.execute_btn.setEnabled(True)
+            self.undo_btn.setEnabled(True)
             QMessageBox.warning(self, "Execute", "No actions to execute.")
             return
-        self.progress_bar.show()
         self._status.showMessage(f"Executing batch {batch_id}...")
-        self.execute_btn.setEnabled(False)
         self.execution_worker = ExecutionWorker(batch_id, self.store)
         self.execution_worker.message.connect(self._on_log_message)
         self.execution_worker.finished_execution.connect(self._on_execution_done)
-        self.execution_worker.start()
+        if not self.execution_worker.start():
+            # start() FAILED — RECOVER UI STATE IMMEDIATELY.
+            self.progress_bar.hide()
+            self.execute_btn.setEnabled(True)
+            self.undo_btn.setEnabled(True)
+            self.execution_worker = None
+            QMessageBox.critical(self, "Execution", "Failed to start execution thread.")
 
     def _on_execution_done(self, result) -> None:
         # HANDLES COMPLETION OF AN EXECUTION BATCH.
         self.progress_bar.hide()
         self.execute_btn.setEnabled(True)
+        self.undo_btn.setEnabled(True)
+        self.execution_worker = None
         self._refresh_batch_history()
         msg = f"Execution complete: {result.completed} completed, {result.failed} failed."
-        self._status.showMessage(msg)
+        self._status.showMessage(msg, 5000)
         self._on_log_message(f"<b>{msg}</b>")
         if result.errors:
             for error in result.errors:
@@ -1430,6 +1461,9 @@ class MainWindow(QMainWindow):
 
     def _undo_last_batch(self) -> None:
         # UNDOES THE MOST RECENTLY COMPLETED BATCH ON A WORKER THREAD.
+        # GUARD: PREVENT DOUBLE-ACTIVATION.
+        if self.undo_worker and self.undo_worker.isRunning():
+            return
         profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else None
         batches = self.store.get_undoable_batches(profile_id)
         if not batches:
@@ -1446,42 +1480,46 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         self.undo_btn.setEnabled(False)
+        self.execute_btn.setEnabled(False)
         self.progress_bar.show()
         self._status.showMessage(f"Undoing batch {batch.id}...")
         self.undo_worker = UndoWorker(batch.id, self.store)
         self.undo_worker.message.connect(self._on_log_message)
         self.undo_worker.finished_undo.connect(self._on_undo_done)
-        self.undo_worker.start()
+        if not self.undo_worker.start():
+            # start() FAILED — RECOVER UI STATE IMMEDIATELY.
+            self.progress_bar.hide()
+            self.execute_btn.setEnabled(True)
+            self.undo_btn.setEnabled(True)
+            self.undo_worker = None
+            QMessageBox.critical(self, "Undo", "Failed to start undo thread.")
 
     def _on_undo_done(self, errors: list) -> None:
         # HANDLES COMPLETION OF AN UNDO WORKER.
         self.progress_bar.hide()
+        self.execute_btn.setEnabled(True)
         self.undo_btn.setEnabled(True)
+        self.undo_worker = None
         self._refresh_batch_history()
         if errors:
             for error in errors:
                 self._on_log_message(f"  WARNING: {error}")
             QMessageBox.warning(self, "Undo", f"Undo completed with {len(errors)} warnings.")
         else:
+            self._status.showMessage("Undo complete.", 5000)
             QMessageBox.information(self, "Undo", "Batch undone. Files restored.")
 
     def _refresh_batch_history(self) -> None:
-        # REFILLS THE BATCH HISTORY TABLE.
+        # REFILLS THE BATCH HISTORY TABLE USING SINGLE QUERIES (NO N+1).
         t = self.batch_table
         t.setUpdatesEnabled(False)
         t.blockSignals(True)
         t.setSortingEnabled(False)
         try:
             profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else None
-            batches = self.store.get_undoable_batches(profile_id)
-            # ALSO GET NON-COMPLETED RECENT BATCHES.
-            from .models import TransactionBatch
-            with self.store.session_factory() as session:
-                from sqlalchemy import select
-                stmt = select(TransactionBatch)
-                if profile_id:
-                    stmt = stmt.where(TransactionBatch.scan_profile_id == profile_id)
-                all_batches = list(session.scalars(stmt.order_by(TransactionBatch.id.desc()).limit(20)).all())
+            all_batches = self.store.get_all_batches(profile_id, limit=20)
+            batch_ids = [b.id for b in all_batches]
+            entry_counts = self.store.get_batch_entry_counts(batch_ids)
             t.setRowCount(len(all_batches))
             for i, batch in enumerate(all_batches):
                 t.setItem(i, 0, QTableWidgetItem(str(batch.id)))
@@ -1496,8 +1534,7 @@ class MainWindow(QMainWindow):
                 }.get(batch.status, COLORS["text3"])
                 status_item.setForeground(QColor(status_color))
                 t.setItem(i, 2, status_item)
-                entry_count = len(self.store.get_entries_by_batch(batch.id))
-                t.setItem(i, 3, QTableWidgetItem(str(entry_count)))
+                t.setItem(i, 3, QTableWidgetItem(str(entry_counts.get(batch.id, 0))))
                 date_str = batch.completed_at or batch.undone_at or batch.created_at
                 t.setItem(i, 4, QTableWidgetItem(str(date_str)[:19] if date_str else "—"))
         finally:

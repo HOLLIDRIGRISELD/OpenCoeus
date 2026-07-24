@@ -324,7 +324,7 @@ def _execute_batch_inner(
             result.errors.append(f"Failed to move {entry.source_path} to destination: {exc}")
             result.failed += 1
             # ROLLBACK: RESTORE REMAINING HOLDING FILES TO ORIGINAL SOURCE.
-            rollback_remaining(moved_to_holding, completed_entries, store)
+            rollback_remaining(moved_to_holding, completed_entries, store, failed_entry_id=entry.id)
             store.mark_batch(batch_id, BatchStatus.FAILED)
             cleanup_holding_area(batch_id)
             return result
@@ -359,8 +359,10 @@ def rollback_remaining(
     all_moved: list[tuple[TransactionEntry, Path]],
     completed: list[tuple[TransactionEntry, Path]],
     store: AuditStore,
+    failed_entry_id: int | None = None,
 ) -> None:
     # RESTORES UNCOMPLETED HOLDING FILES TO ORIGINAL SOURCES.
+    # SKIPS THE ENTRY THAT TRIGGERED THE FAILURE (ALREADY MARKED FAILED).
     completed_ids = {e.id for e, _ in completed}
     for entry, holding_path in reversed(all_moved):
         if entry.id in completed_ids:
@@ -369,7 +371,8 @@ def rollback_remaining(
         try:
             if holding_path.exists():
                 safe_move(holding_path, source)
-                store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
+                if entry.id != failed_entry_id:
+                    store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
         except Exception:
             pass
 
