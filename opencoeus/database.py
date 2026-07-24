@@ -15,6 +15,8 @@ from .models import (
     OrganizationRule,
     ProposedAction,
     ScanProfile,
+    TransactionBatch,
+    TransactionEntry,
 )
 
 
@@ -331,6 +333,106 @@ class AuditStore:
             for action in actions:
                 action.approved = True
                 count += 1
+            session.commit()
+            return count
+
+    # STAGE 3: TRANSACTION BATCH AND ENTRY METHODS.
+
+    def create_batch(self, profile_id: int, description: str = "") -> TransactionBatch:
+        # CREATES A NEW TRANSACTION BATCH FOR TRACKING EXECUTION OF APPROVED ACTIONS.
+        with self.session_factory() as session:
+            batch = TransactionBatch(
+                scan_profile_id=profile_id,
+                description=description,
+                status="pending",
+            )
+            session.add(batch)
+            session.commit()
+            session.refresh(batch)
+            return batch
+
+    def add_entry(self, batch_id: int, action_id: int | None, action_type: str,
+                  source_path: str, destination_path: str,
+                  source_hash: str = "", source_size: int = 0) -> TransactionEntry:
+        # ADDS A SINGLE TRANSACTION ENTRY TO A BATCH.
+        with self.session_factory() as session:
+            entry = TransactionEntry(
+                batch_id=batch_id,
+                action_id=action_id,
+                action_type=action_type,
+                source_path=source_path,
+                destination_path=destination_path,
+                source_hash=source_hash,
+                source_size=source_size,
+                status="pending",
+            )
+            session.add(entry)
+            session.commit()
+            session.refresh(entry)
+            return entry
+
+    def get_entries_by_batch(self, batch_id: int, status: str | None = None) -> list[TransactionEntry]:
+        # RETURNS ALL ENTRIES FOR A BATCH, OPTIONALLY FILTERED BY STATUS.
+        with self.session_factory() as session:
+            stmt = select(TransactionEntry).where(TransactionEntry.batch_id == batch_id)
+            if status is not None:
+                stmt = stmt.where(TransactionEntry.status == status)
+            return list(session.scalars(stmt).all())
+
+    def update_entry(self, entry_id: int, **kwargs) -> bool:
+        # UPDATES SPECIFIED FIELDS ON A TRANSACTION ENTRY.
+        with self.session_factory() as session:
+            entry = session.scalar(select(TransactionEntry).where(TransactionEntry.id == entry_id))
+            if entry is None:
+                return False
+            for field_name, field_value in kwargs.items():
+                setattr(entry, field_name, field_value)
+            session.commit()
+            return True
+
+    def mark_batch(self, batch_id: int, status: str, **kwargs) -> bool:
+        # UPDATES BATCH STATUS AND OPTIONAL FIELDS LIKE COMPLETED_AT OR UNDONE_AT.
+        with self.session_factory() as session:
+            batch = session.scalar(select(TransactionBatch).where(TransactionBatch.id == batch_id))
+            if batch is None:
+                return False
+            batch.status = status
+            for field_name, field_value in kwargs.items():
+                setattr(batch, field_name, field_value)
+            session.commit()
+            return True
+
+    def get_undoable_batches(self, profile_id: int | None = None) -> list[TransactionBatch]:
+        # RETURNS COMPLETED BATCHES IN REVERSE ORDER (MOST RECENT FIRST) FOR UNDO.
+        with self.session_factory() as session:
+            stmt = select(TransactionBatch).where(TransactionBatch.status == "completed")
+            if profile_id is not None:
+                stmt = stmt.where(TransactionBatch.scan_profile_id == profile_id)
+            return list(session.scalars(stmt.order_by(TransactionBatch.id.desc())).all())
+
+    def get_latest_completed_batch(self, profile_id: int) -> TransactionBatch | None:
+        # RETURNS THE MOST RECENTLY COMPLETED BATCH FOR A PROFILE.
+        with self.session_factory() as session:
+            return session.scalar(
+                select(TransactionBatch)
+                .where(
+                    TransactionBatch.scan_profile_id == profile_id,
+                    TransactionBatch.status == "completed",
+                )
+                .order_by(TransactionBatch.id.desc())
+            )
+
+    def delete_proposed_actions_by_ids(self, action_ids: list[int]) -> int:
+        # DELETES SPECIFIC PROPOSED ACTIONS BY THEIR IDS (REJECTION). RETURNS COUNT DELETED.
+        if not action_ids:
+            return 0
+        with self.session_factory() as session:
+            actions = session.scalars(
+                select(ProposedAction).where(ProposedAction.id.in_(action_ids))
+            ).all()
+            count = len(actions)
+            for action in actions:
+                session.delete(action)
             session.commit()
             return count
 

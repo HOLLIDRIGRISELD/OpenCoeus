@@ -94,4 +94,36 @@ class ProposedAction(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    batch_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("transaction_batches.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
+
+
+class TransactionBatch(Base):
+    __tablename__ = "transaction_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scan_profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("scan_profiles.id"))
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TransactionEntry(Base):
+    __tablename__ = "transaction_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(Integer, ForeignKey("transaction_batches.id"))
+    action_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("proposed_actions.id"), nullable=True)
+    action_type: Mapped[str] = mapped_column(String(32))
+    source_path: Mapped[str] = mapped_column(Text)
+    destination_path: Mapped[str] = mapped_column(Text)
+    source_hash: Mapped[str] = mapped_column(String(64), default="")
+    destination_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_size: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    holding_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
