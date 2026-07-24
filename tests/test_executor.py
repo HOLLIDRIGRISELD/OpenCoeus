@@ -121,7 +121,7 @@ class HoldingAreaTests(unittest.TestCase):
     def test_get_holding_dir(self):
         # VERIFIES THAT THE HOLDING DIR PATH IS CORRECT.
         result = get_holding_dir(42)
-        self.assertEqual(result, Path(".opencoeus") / "transactions" / "42")
+        self.assertEqual(result, Path.home() / ".opencoeus" / "transactions" / "42")
 
     def test_create_holding_area(self):
         # VERIFIES THAT THE HOLDING DIRECTORY IS CREATED.

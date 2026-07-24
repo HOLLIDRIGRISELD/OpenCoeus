@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from .database import AuditStore
 from .executor import execute_batch, undo_batch, ExecutionResult
+from .hashing import sha256_file
+from .models import EntryStatus
 
 
 @dataclass
@@ -34,11 +37,9 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
         source_hash = ""
         source_size = 0
         try:
-            from pathlib import Path
             source = Path(action.original_path)
             if source.exists():
                 source_size = source.stat().st_size
-                from .hashing import sha256_file
                 source_hash = sha256_file(source)
         except Exception:
             pass
@@ -62,9 +63,9 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
 def get_batch_summary(store: AuditStore, batch_id: int) -> BatchSummary:
     # RETURNS COUNTS BY STATUS FOR A BATCH.
     all_entries = store.get_entries_by_batch(batch_id)
-    completed = sum(1 for e in all_entries if e.status == "completed")
-    failed = sum(1 for e in all_entries if e.status == "failed")
-    pending = sum(1 for e in all_entries if e.status in {"pending", "moved_to_holding"})
+    completed = sum(1 for e in all_entries if e.status == EntryStatus.COMPLETED)
+    failed = sum(1 for e in all_entries if e.status == EntryStatus.FAILED)
+    pending = sum(1 for e in all_entries if e.status in {EntryStatus.PENDING, EntryStatus.MOVED_TO_HOLDING})
     status = "completed" if completed == len(all_entries) else "failed" if failed > 0 else "in_progress"
     return BatchSummary(
         batch_id=batch_id,

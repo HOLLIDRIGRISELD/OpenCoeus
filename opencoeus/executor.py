@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .config import database_url
 from .database import AuditStore
 from .hashing import sha256_file
-from .models import TransactionEntry
+from .models import BatchStatus, EntryStatus, TransactionEntry
 
 
-HOLDING_ROOT = Path(".opencoeus") / "transactions"
+HOLDING_ROOT = Path.home() / ".opencoeus" / "transactions"
 
 
 @dataclass
@@ -69,7 +69,6 @@ def safe_move(source: Path, destination: Path) -> Path:
             return actual_destination
         except PermissionError:
             if attempt < max_retries - 1:
-                import time
                 time.sleep(0.1 * (attempt + 1))
             else:
                 raise
@@ -181,7 +180,7 @@ def execute_batch(
     # MAIN EXECUTION PIPELINE: PRE-FLIGHT, MOVE TO HOLDING, MOVE TO DESTINATION, CLEANUP.
     result = ExecutionResult(batch_id=batch_id)
     entries = store.get_entries_by_batch(batch_id)
-    pending_entries = [e for e in entries if e.status == "pending"]
+    pending_entries = [e for e in entries if e.status == EntryStatus.PENDING]
     result.total = len(pending_entries)
     if not pending_entries:
         result.skipped = len(entries) - len(pending_entries)
@@ -195,11 +194,11 @@ def execute_batch(
             result.failed += 1
             result.total -= 1
         if result.failed == result.total:
-            store.mark_batch(batch_id, "failed")
+            store.mark_batch(batch_id, BatchStatus.FAILED)
             return result
 
     # UPDATE BATCH STATUS TO EXECUTING.
-    store.mark_batch(batch_id, "executing")
+    store.mark_batch(batch_id, BatchStatus.EXECUTING)
 
     # CREATE HOLDING AREA.
     holding_dir = create_holding_area(batch_id)
@@ -209,22 +208,22 @@ def execute_batch(
     for entry in pending_entries:
         source = Path(entry.source_path)
         if not source.exists():
-            store.update_entry(entry.id, status="failed", error_message=f"File not found: {entry.source_path}")
+            store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=f"File not found: {entry.source_path}")
             result.failed += 1
             continue
         try:
             actual_dest = safe_move(source, holding_dir / source.name)
-            store.update_entry(entry.id, status="moved_to_holding", holding_path=str(actual_dest))
+            store.update_entry(entry.id, status=EntryStatus.MOVED_TO_HOLDING, holding_path=str(actual_dest))
             moved_to_holding.append((entry, actual_dest))
             if progress_callback:
                 progress_callback(f"Moved to holding: {source.name}")
         except Exception as exc:
-            store.update_entry(entry.id, status="failed", error_message=str(exc))
+            store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=str(exc))
             result.errors.append(f"Failed to move {source.name} to holding: {exc}")
             result.failed += 1
             # ROLLBACK: RESTORE FILES ALREADY MOVED TO HOLDING.
             rollback_partial(moved_to_holding, store)
-            store.mark_batch(batch_id, "failed")
+            store.mark_batch(batch_id, BatchStatus.FAILED)
             cleanup_holding_area(batch_id)
             return result
 
@@ -238,7 +237,7 @@ def execute_batch(
             dest_hash = sha256_file(actual_dest)
             store.update_entry(
                 entry.id,
-                status="completed",
+                status=EntryStatus.COMPLETED,
                 destination_path=str(actual_dest),
                 destination_hash=dest_hash,
                 executed_at=datetime.now(UTC).replace(tzinfo=None),
@@ -251,12 +250,12 @@ def execute_batch(
             if progress_callback:
                 progress_callback(f"Completed: {actual_dest.name}")
         except Exception as exc:
-            store.update_entry(entry.id, status="failed", error_message=str(exc))
+            store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=str(exc))
             result.errors.append(f"Failed to move {entry.source_path} to destination: {exc}")
             result.failed += 1
             # ROLLBACK: RESTORE REMAINING HOLDING FILES TO ORIGINAL SOURCE.
             rollback_remaining(moved_to_holding, completed_entries, store)
-            store.mark_batch(batch_id, "failed")
+            store.mark_batch(batch_id, BatchStatus.FAILED)
             cleanup_holding_area(batch_id)
             return result
 
@@ -268,7 +267,7 @@ def execute_batch(
         # USE THE DEEPEST COMMON ANCESTOR AS ROOT.
         root_path = Path(os.path.commonpath([str(d) for d in source_dirs]))
         cleanup_empty_folders(root_path)
-    store.mark_batch(batch_id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
+    store.mark_batch(batch_id, BatchStatus.COMPLETED, completed_at=datetime.now(UTC).replace(tzinfo=None))
     return result
 
 
@@ -282,7 +281,7 @@ def rollback_partial(
         try:
             if holding_path.exists():
                 safe_move(holding_path, source)
-                store.update_entry(entry.id, status="pending", holding_path=None, error_message=None)
+                store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
         except Exception:
             pass
 
@@ -301,7 +300,7 @@ def rollback_remaining(
         try:
             if holding_path.exists():
                 safe_move(holding_path, source)
-                store.update_entry(entry.id, status="pending", holding_path=None, error_message=None)
+                store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
         except Exception:
             pass
 
@@ -318,7 +317,7 @@ def undo_batch(
 ) -> list[str]:
     # REVERSES ALL COMPLETED ENTRIES IN A BATCH, NEWEST FIRST.
     errors: list[str] = []
-    entries = store.get_entries_by_batch(batch_id, status="completed")
+    entries = store.get_entries_by_batch(batch_id, status=EntryStatus.COMPLETED)
     if not entries:
         return ["No completed entries to undo"]
 
@@ -327,18 +326,18 @@ def undo_batch(
         source = Path(entry.source_path)
         if not destination.exists():
             errors.append(f"Destination file missing: {entry.destination_path}")
-            store.update_entry(entry.id, status="undone", error_message="Destination missing")
+            store.update_entry(entry.id, status=EntryStatus.UNDONE, error_message="Destination missing")
             continue
         try:
             safe_move(destination, source)
-            store.update_entry(entry.id, status="undone")
+            store.update_entry(entry.id, status=EntryStatus.UNDONE)
             if progress_callback:
                 progress_callback(f"Undone: {destination.name}")
         except Exception as exc:
             errors.append(f"Failed to undo {entry.destination_path}: {exc}")
-            store.update_entry(entry.id, status="failed", error_message=str(exc))
+            store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=str(exc))
 
-    store.mark_batch(batch_id, "undone", undone_at=datetime.now(UTC).replace(tzinfo=None))
+    store.mark_batch(batch_id, BatchStatus.UNDONE, undone_at=datetime.now(UTC).replace(tzinfo=None))
     cleanup_holding_area(batch_id)
     # CLEANUP EMPTY CATEGORY FOLDERS LEFT BY UNDO.
     dest_dirs = {Path(e.destination_path).parent for e in entries if e.destination_path}

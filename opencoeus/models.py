@@ -1,9 +1,26 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import StrEnum
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class BatchStatus(StrEnum):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    UNDONE = "undone"
+
+
+class EntryStatus(StrEnum):
+    PENDING = "pending"
+    MOVED_TO_HOLDING = "moved_to_holding"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    UNDONE = "undone"
 
 
 class Base(DeclarativeBase):

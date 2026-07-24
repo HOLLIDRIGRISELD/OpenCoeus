@@ -9,6 +9,8 @@ from sqlalchemy.orm import sessionmaker
 from .config import database_url
 from .models import (
     Base,
+    BatchStatus,
+    EntryStatus,
     FileAudit,
     FolderClassification,
     NamingHistory,
@@ -379,7 +381,7 @@ class AuditStore:
             batch = TransactionBatch(
                 scan_profile_id=profile_id,
                 description=description,
-                status="pending",
+                status=EntryStatus.PENDING,
             )
             session.add(batch)
             session.commit()
@@ -399,7 +401,7 @@ class AuditStore:
                 destination_path=destination_path,
                 source_hash=source_hash,
                 source_size=source_size,
-                status="pending",
+                status=EntryStatus.PENDING,
             )
             session.add(entry)
             session.commit()
@@ -440,7 +442,7 @@ class AuditStore:
     def get_undoable_batches(self, profile_id: int | None = None) -> list[TransactionBatch]:
         # RETURNS COMPLETED BATCHES IN REVERSE ORDER (MOST RECENT FIRST) FOR UNDO.
         with self.session_factory() as session:
-            stmt = select(TransactionBatch).where(TransactionBatch.status == "completed")
+            stmt = select(TransactionBatch).where(TransactionBatch.status == BatchStatus.COMPLETED)
             if profile_id is not None:
                 stmt = stmt.where(TransactionBatch.scan_profile_id == profile_id)
             return list(session.scalars(stmt.order_by(TransactionBatch.id.desc())).all())
@@ -452,7 +454,7 @@ class AuditStore:
                 select(TransactionBatch)
                 .where(
                     TransactionBatch.scan_profile_id == profile_id,
-                    TransactionBatch.status == "completed",
+                    TransactionBatch.status == BatchStatus.COMPLETED,
                 )
                 .order_by(TransactionBatch.id.desc())
             )

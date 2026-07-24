@@ -19,45 +19,7 @@ from .profiles import (
     load_profile_by_name,
     update_profile,
 )
-from .rules_engine import RulesEngine
-
-# DEFAULT RULES THAT APPLY COMMON ORGANIZATION PATTERNS OUT OF THE BOX.
-DEFAULT_RULES = [
-    {"id": 1, "name": "Documents", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".pdf", ".docx", ".doc", ".pptx", ".txt", ".rtf", ".odt", ".md"]}',
-     "destination_template": "{root}/Documents/{filename}", "action_type": "move"},
-    {"id": 2, "name": "Photos", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff"]}',
-     "destination_template": "{root}/Photos/{filename}", "action_type": "move"},
-    {"id": 3, "name": "Music", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a"]}',
-     "destination_template": "{root}/Music/{filename}", "action_type": "move"},
-    {"id": 4, "name": "Video", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"]}',
-     "destination_template": "{root}/Video/{filename}", "action_type": "move"},
-    {"id": 5, "name": "Compressed", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"]}',
-     "destination_template": "{root}/Compressed/{filename}", "action_type": "move"},
-    {"id": 6, "name": "Code", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".cs", ".rb", ".go", ".rs", ".html", ".css", ".json", ".xml", ".yaml", ".yml", ".toml"]}',
-     "destination_template": "{root}/Code/{filename}", "action_type": "move"},
-    {"id": 7, "name": "Installers", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".msi", ".exe", ".dmg", ".deb", ".rpm", ".apk"]}',
-     "destination_template": "{root}/Installers/{filename}", "action_type": "move"},
-    {"id": 8, "name": "Old files archive", "rule_type": "date", "enabled": True, "priority": 50,
-     "rule_config": '{"older_than_days": 365}',
-     "destination_template": "{root}/Archive/{date_year}/{filename}", "action_type": "move"},
-    {"id": 9, "name": "Duplicate consolidation", "rule_type": "status", "enabled": True, "priority": 5,
-     "rule_config": '{"status": "duplicate"}',
-     "destination_template": "{root}/Duplicates/{filename}", "action_type": "move"},
-    {"id": 10, "name": "Uncategorized", "rule_type": "always", "enabled": True, "priority": 100,
-     "rule_config": "{}",
-     "destination_template": "{root}/Other/{filename}", "action_type": "move"},
-    {"id": 11, "name": "Spreadsheets", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".csv", ".xlsx", ".xls"]}',
-     "destination_template": "{root}/Spreadsheets/{filename}", "action_type": "move"},
-]
-
+from .rules_engine import DEFAULT_RULES, RulesEngine
 
 def main() -> int:
     command_parser = argparse.ArgumentParser(description="OpenCoeus offline scan and organization (never modifies files without approval).")
