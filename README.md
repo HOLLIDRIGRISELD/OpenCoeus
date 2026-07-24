@@ -2,7 +2,7 @@
 
 OpenCoeus is an offline-first Data Lifecycle Management desktop application and intelligent file manager for Windows, macOS, and Linux. It is designed to safely analyse, deduplicate, rename, and reorganise large local folders, drives, and server shares without cloud services.
 
-The current release proposes non-destructive file actions that require explicit user approval. It scans folders, detects exact duplicates, honours protected system folders, classifies folders into categories, applies rules-based organisation, and stores an audit trail locally. It does not yet execute file changes — that is planned for Stage 3.
+The current release proposes file actions and executes approved changes with a reversible transaction journal. It scans folders, detects exact duplicates, honours protected system folders, classifies folders into categories, applies rules-based organisation, and stores an audit trail locally. Approved changes are executed atomically with collision detection, holding area rollback, and undo capability.
 
 For the complete product scope, implemented capabilities, safety policy, and staged roadmap, see [PROJECT_PLAN.md](PROJECT_PLAN.md).
 
@@ -62,6 +62,8 @@ For the complete product scope, implemented capabilities, safety policy, and sta
 - `profile` — create, list, show, and delete scan profiles.
 - `classify` — build folder tree and classify folders with optional JSON export.
 - `organize` — full two-phase pipeline: classify, scan, apply rules, export proposed actions.
+- `execute` — execute approved file actions with optional dry-run mode.
+- `undo` — reverse the last executed batch of file moves.
 
 ## Quick start
 
@@ -120,6 +122,24 @@ python -m opencoeus.cli organize "D:\YourFolder" --output actions.csv --profile 
 
 The `organize` command runs Phase 1 (classify folders), Phase 2 (scan files with exclusions), applies the rules engine, and exports proposed file actions. It never moves or removes files — every action requires explicit approval in the UI.
 
+Execute approved file actions (after approving in the UI):
+
+```bash
+python -m opencoeus.cli execute --profile "My Drive"
+```
+
+Dry run (show what would be done without executing):
+
+```bash
+python -m opencoeus.cli execute --profile "My Drive" --dry-run
+```
+
+Undo the last executed batch:
+
+```bash
+python -m opencoeus.cli undo --profile "My Drive"
+```
+
 ## Package the desktop application
 
 Build on the operating system you intend to distribute to. PyInstaller packages are platform-specific.
@@ -148,11 +168,10 @@ If that location is read-only, it falls back to `.opencoeus` in the working fold
 
 ## Current development focus
 
-Stage 2 (selective review and organisation) is complete. The next release focuses on executing approved file changes:
+Stage 3 (execute approved changes and recovery) is complete. The next release focuses on spreadsheet workflows:
 
-1. Execute approved renames and moves with collision detection.
-2. Add a persistent, reversible transaction journal.
-3. Duplicate resolution with explicit retained-copy selection.
-4. Re-scan and integrity verification before changes are applied.
+1. Define supported spreadsheet schemas before enabling `.xlsx` or `.xlsm` consolidation.
+2. Implement read-only spreadsheet inspection, followed by an approved master-workbook workflow.
+3. Build, package, and test on clean offline Windows, macOS, and Linux machines.
 
 The complete product scope and delivery stages are in [PROJECT_PLAN.md](PROJECT_PLAN.md). The actionable engineering backlog is in [TODO.md](TODO.md).

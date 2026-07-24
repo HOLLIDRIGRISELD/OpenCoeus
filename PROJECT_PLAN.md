@@ -57,13 +57,18 @@ It must never reorganise an entire drive as one flat collection. Applications, g
 - [x] CLI subcommands: scan, profile, classify, organise.
 - [x] 188 automated tests across 13 test files.
 
-### Stage 3 — approved changes and recovery (next)
+### Stage 3 — approved changes and recovery (implemented)
 
-- [ ] Execute approved renames and moves with collision detection.
-- [ ] Persistent, reversible transaction journal for all file changes.
-- [ ] Duplicate resolution with explicit retained-copy selection; never auto-delete.
-- [ ] Re-scan and integrity verification immediately before changes are applied.
-- [ ] Undo capability for recently applied changes.
+- [x] Execute approved renames and moves with collision detection.
+- [x] Persistent, reversible transaction journal for all file changes.
+- [x] Duplicate resolution with explicit retained-copy selection; never auto-delete.
+- [x] Re-scan and integrity verification immediately before changes are applied.
+- [x] Undo capability for recently applied changes.
+- [x] TransactionBatch and TransactionEntry database models.
+- [x] Atomic file moves with holding area for rollback.
+- [x] Pre-flight hash verification before execution.
+- [x] Batch history table in the UI.
+- [x] CLI subcommands: execute, undo.
 
 ### Stage 4 — spreadsheet workflows and release quality
 
@@ -74,4 +79,4 @@ It must never reorganise an entire drive as one flat collection. Applications, g
 
 ## Explicit non-goals for the current version
 
-The current release proposes file actions but does not execute them. It does not interpret images with OCR, analyse `.xlsm` data, merge spreadsheets, or use a spaCy/scikit-learn model. Automatic deletion of duplicates is never performed — every action requires explicit user approval.
+The current release proposes file actions and executes approved changes with a reversible transaction journal. It does not interpret images with OCR, analyse `.xlsm` data, merge spreadsheets, or use a spaCy/scikit-learn model. Automatic deletion of duplicates is never performed — every action requires explicit user approval.

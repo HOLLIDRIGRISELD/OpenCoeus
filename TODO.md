@@ -28,7 +28,16 @@
 - [x] Bug fixes: extended metadata persisted, profile wired to CLI, dynamic profile_id, action approvals saved, folder exclusions persisted to profile, sync index alignment fixed.
 - [x] 188 automated tests across 13 test files.
 
-## Next: execute approved changes (Stage 3)
+### Stage 3: execute approved changes
+- [x] TransactionBatch and TransactionEntry database models with 8 CRUD methods.
+- [x] Pre-Stage 3 fixes: reason column on ProposedAction, reject_action persistence, protected file skip in rules engine.
+- [x] executor.py: atomic file moves with collision detection, holding area management, pre-flight hash verification, rollback on failure.
+- [x] journal.py: batch orchestration, undo orchestration, batch summary.
+- [x] UI: Execute Approved and Undo Last Batch buttons, batch history table, ExecutionWorker background thread.
+- [x] CLI: execute (--dry-run) and undo subcommands.
+- [x] 233 automated tests across 16 test files.
+
+## Next: spreadsheet workflows and release (Stage 4)
 
 - [ ] Execute approved renames and moves with collision detection.
 - [ ] Persistent, reversible transaction journal for all file changes.
