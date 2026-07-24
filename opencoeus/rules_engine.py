@@ -80,6 +80,20 @@ class RulesEngine:
                 prepared["_parsed_config"] = json.loads(prepared["rule_config"])
             else:
                 prepared["_parsed_config"] = prepared.get("rule_config", {})
+            # PRE-COMPILE REGEX PATTERNS AND EXTENSION SETS FOR PERFORMANCE.
+            config = prepared["_parsed_config"]
+            if "patterns" in config:
+                prepared["_compiled_patterns"] = [
+                    re.compile(p, re.IGNORECASE) for p in config["patterns"]
+                ]
+            if "extensions" in config:
+                prepared["_compiled_extensions"] = {
+                    ext.lower() for ext in config["extensions"]
+                }
+            if "folders" in config:
+                prepared["_compiled_folders"] = [
+                    re.compile(p, re.IGNORECASE) for p in config["folders"]
+                ]
             prepared_rules.append(prepared)
         sorted_rules = sorted(prepared_rules, key=lambda r: r.get("priority", 0))
         profile_excluded = set(self.profile.excluded_folders) if self.profile else set()
@@ -108,30 +122,37 @@ class RulesEngine:
         rule_type = rule.get("rule_type", "")
         config = rule.get("_parsed_config", {})
         if rule_type == "extension":
-            return self._matches_extension(row, config)
+            return self._matches_extension(row, rule)
         if rule_type == "pattern":
-            return self._matches_pattern(row, config)
+            return self._matches_pattern(row, rule)
         if rule_type == "date":
             return self._matches_date(row, config)
         if rule_type == "size":
             return self._matches_size(row, config)
         if rule_type == "folder":
-            return self._matches_folder(row, config)
+            return self._matches_folder(row, rule)
         if rule_type == "status":
             return self._matches_status(row, config)
         if rule_type == "always":
             return True
         return False
 
-    def _matches_extension(self, row: ManifestRow, config: dict) -> bool:
+    def _matches_extension(self, row: ManifestRow, rule: dict) -> bool:
         # CHECKS WHETHER THE FILE EXTENSION IS IN THE RULE'S EXTENSION LIST.
-        allowed_extensions = [ext.lower() for ext in config.get("extensions", [])]
-        return row.extension.lower() in allowed_extensions
+        allowed = rule.get("_compiled_extensions")
+        if allowed is not None:
+            return row.extension.lower() in allowed
+        config = rule.get("_parsed_config", {})
+        return row.extension.lower() in {e.lower() for e in config.get("extensions", [])}
 
-    def _matches_pattern(self, row: ManifestRow, config: dict) -> bool:
+    def _matches_pattern(self, row: ManifestRow, rule: dict) -> bool:
         # CHECKS WHETHER THE FILENAME MATCHES ANY OF THE RULE'S REGEX PATTERNS.
-        patterns = config.get("patterns", [])
+        compiled = rule.get("_compiled_patterns")
         filename = Path(row.path).name
+        if compiled is not None:
+            return any(p.search(filename) for p in compiled)
+        config = rule.get("_parsed_config", {})
+        patterns = config.get("patterns", [])
         return any(re.search(pattern, filename, re.IGNORECASE) for pattern in patterns)
 
     def _matches_date(self, row: ManifestRow, config: dict) -> bool:
@@ -161,8 +182,12 @@ class RulesEngine:
         max_bytes = config.get("max_bytes", float("inf"))
         return min_bytes <= row.size <= max_bytes
 
-    def _matches_folder(self, row: ManifestRow, config: dict) -> bool:
+    def _matches_folder(self, row: ManifestRow, rule: dict) -> bool:
         # CHECKS WHETHER THE FILE'S FOLDER PATH MATCHES ANY OF THE RULE'S FOLDER PATTERNS.
+        compiled = rule.get("_compiled_folders")
+        if compiled is not None:
+            return any(p.search(row.folder_path) for p in compiled)
+        config = rule.get("_parsed_config", {})
         folder_patterns = config.get("folders", [])
         return any(
             re.search(pattern, row.folder_path, re.IGNORECASE)
@@ -200,5 +225,6 @@ class RulesEngine:
         result = result.replace("{extension}", extension.lstrip("."))
         result = result.replace("{folder}", folder)
         result = result.replace("{root}", self.scan_root)
-        result = result.replace("{date_year}", row.modified_at[:4] if row.modified_at else "unknown")
+        date_year = row.modified_at[:4] if row.modified_at and len(row.modified_at) >= 4 else "unknown"
+        result = result.replace("{date_year}", date_year)
         return result

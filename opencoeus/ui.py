@@ -178,7 +178,7 @@ class RuleEditDialog(QDialog):
         layout.addRow("Name:", self.name_input)
 
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["extension", "pattern", "date", "size", "folder"])
+        self.type_combo.addItems(["extension", "pattern", "date", "size", "folder", "status", "always"])
         idx = self.type_combo.findText(self.rule.get("rule_type", "extension"))
         if idx >= 0:
             self.type_combo.setCurrentIndex(idx)
