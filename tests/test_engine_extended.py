@@ -211,9 +211,11 @@ class ScanEnginePhaseTests(unittest.TestCase):
             test_root = Path(temporary_directory)
             (test_root / "sub").mkdir()
             store = self._create_store_outside_root(test_root)
+            # CREATE A PROFILE SO THE FK CONSTRAINT IS SATISFIED.
+            profile = store.create_profile("test")
             engine = ScanEngine(ScanSettings(test_root, extract_documents=False), store)
-            engine.run_phase_one()
-            saved = store.get_classifications(1)
+            engine.run_phase_one(profile_id=profile.id)
+            saved = store.get_classifications(profile.id)
             self.assertGreater(len(saved), 0)
             store.close()
 

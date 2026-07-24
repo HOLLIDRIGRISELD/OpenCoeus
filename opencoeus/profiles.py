@@ -83,12 +83,19 @@ def delete_profile(store: AuditStore, profile_id: int) -> bool:
 def _db_profile_to_config(db_profile: ScanProfile) -> ProfileConfig:
     # CONVERTS A DATABASE ScanProfile ORM OBJECT INTO A LIGHTWEIGHT ProfileConfig DATACLASS.
     import json
+    def _safe_json_list(value: str) -> list[str]:
+        # PARSES JSON STRING TO LIST, RETURNING EMPTY LIST ON MALFORMED DATA.
+        try:
+            result = json.loads(value)
+            return result if isinstance(result, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
     return ProfileConfig(
         profile_id=db_profile.id,
         name=db_profile.name,
         root_path=db_profile.root_path,
-        included_folders=json.loads(db_profile.included_folders),
-        excluded_folders=json.loads(db_profile.excluded_folders),
-        custom_protected_patterns=json.loads(db_profile.custom_protected_patterns),
+        included_folders=_safe_json_list(db_profile.included_folders),
+        excluded_folders=_safe_json_list(db_profile.excluded_folders),
+        custom_protected_patterns=_safe_json_list(db_profile.custom_protected_patterns),
         document_extraction=db_profile.document_extraction,
     )

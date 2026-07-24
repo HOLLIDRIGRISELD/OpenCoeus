@@ -161,8 +161,9 @@ class RulesEngine:
             return False
         try:
             file_date = datetime.fromisoformat(row.modified_at)
+            # CONVERT TIMEZONE-AWARE DATES TO LOCAL TIME BEFORE STRIPPING TIMEZONE.
             if file_date.tzinfo is not None:
-                file_date = file_date.replace(tzinfo=None)
+                file_date = file_date.astimezone().replace(tzinfo=None)
         except ValueError:
             return False
         older_than_days = config.get("older_than_days")
@@ -229,4 +230,13 @@ class RulesEngine:
         result = result.replace("{root}", self.scan_root)
         date_year = row.modified_at[:4] if row.modified_at and len(row.modified_at) >= 4 else "unknown"
         result = result.replace("{date_year}", date_year)
+        # PREVENT PATH TRAVERSAL: ENSURE THE RESULT STAYS WITHIN THE SCAN ROOT.
+        if self.scan_root:
+            try:
+                resolved = Path(result).resolve()
+                scan_root_resolved = Path(self.scan_root).resolve()
+                if not str(resolved).startswith(str(scan_root_resolved)):
+                    return row.path
+            except (ValueError, OSError):
+                return row.path
         return result

@@ -70,12 +70,23 @@ def safe_move(source: Path, destination: Path) -> Path:
         try:
             shutil.copy2(source, actual_destination)
             source.unlink()
-            return actual_destination
+            # VERIFY DESTINATION EXISTS AFTER COPY+DELETE TO PREVENT ORPHANS.
+            if actual_destination.exists():
+                return actual_destination
+            raise OSError("Destination missing after move")
         except PermissionError:
             if attempt < max_retries - 1:
                 time.sleep(0.1 * (attempt + 1))
             else:
                 raise
+        except OSError:
+            # COPY SUCCEEDED BUT DELETE FAILED — CLEAN UP ORPHANED COPY.
+            if actual_destination.exists() and source.exists():
+                try:
+                    actual_destination.unlink()
+                except OSError:
+                    pass
+            raise
 
 
 # ------------------------------------------------------------------ #
@@ -83,18 +94,18 @@ def safe_move(source: Path, destination: Path) -> Path:
 # ------------------------------------------------------------------ #
 
 
-def verify_file_integrity(file_path: Path, expected_hash: str, expected_size: int) -> str | None:
-    # RE-HASHES A FILE AND COMPARES TO EXPECTED VALUES. RETURNS ERROR MESSAGE OR NONE.
+def verify_file_integrity(file_path: Path, expected_hash: str, expected_size: int) -> tuple[str | None, str]:
+    # RE-HASHES A FILE AND COMPARES TO EXPECTED VALUES.
+    # RETURNS (ERROR_MESSAGE, ACTUAL_HASH). ERROR IS NONE ON SUCCESS.
     if not file_path.exists():
-        return f"File not found: {file_path}"
+        return (f"File not found: {file_path}", "")
     actual_size = file_path.stat().st_size
     if actual_size != expected_size:
-        return f"Size mismatch: expected {expected_size}, got {actual_size} for {file_path}"
-    if expected_hash:
-        actual_hash = sha256_file(file_path)
-        if actual_hash != expected_hash:
-            return f"Hash mismatch: expected {expected_hash[:12]}..., got {actual_hash[:12]}... for {file_path}"
-    return None
+        return (f"Size mismatch: expected {expected_size}, got {actual_size} for {file_path}", "")
+    actual_hash = sha256_file(file_path) if expected_hash else ""
+    if expected_hash and actual_hash != expected_hash:
+        return (f"Hash mismatch: expected {expected_hash[:12]}..., got {actual_hash[:12]}... for {file_path}", actual_hash)
+    return (None, actual_hash)
 
 
 # ------------------------------------------------------------------ #
@@ -132,17 +143,16 @@ def cleanup_empty_folders(root_path: Path, excluded_folders: set[str] | None = N
     # RETURNS THE NUMBER OF FOLDERS REMOVED.
     excluded = excluded_folders or set()
     removed = 0
-    # SORT BY DEPTH DESCENDING (BOTTOM-UP) SO CHILDREN ARE CHECKED BEFORE PARENTS.
-    all_dirs = sorted(root_path.rglob("*"), key=lambda p: len(p.parts), reverse=True)
-    for dir_path in all_dirs:
-        if not dir_path.is_dir():
-            continue
+    # USE OS.WALK TOP-DOWN=FALSE FOR MEMORY-EFFICIENT BOTTOM-UP TRAVERSAL.
+    for dirpath, _dirnames, _filenames in os.walk(root_path, topdown=False):
+        dir_path = Path(dirpath)
         if dir_path == root_path:
             continue
         if dir_path.name == ".opencoeus":
             continue
         if any(dir_path.as_posix().startswith(Path(ex).as_posix()) for ex in excluded):
             continue
+        # RECHECK ACTUAL CONTENTS (OS.WALK DIRNAMES STALE AFTER CHILD REMOVAL).
         try:
             if not any(dir_path.iterdir()):
                 dir_path.rmdir()
@@ -170,7 +180,7 @@ def pre_execution_check(
             store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=f"File not found: {source}")
             errors.append(f"File not found: {entry.source_path}")
             continue
-        error = verify_file_integrity(source, entry.source_hash, entry.source_size)
+        error, _ = verify_file_integrity(source, entry.source_hash, entry.source_size)
         if error:
             store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=error)
             errors.append(error)
@@ -185,32 +195,54 @@ def pre_execution_check(
 
 
 def recover_crashed_batches(store: AuditStore) -> int:
-    # MARKS ANY BATCH STUCK IN EXECUTING STATUS AS FAILED (FROM CRASHED SESSIONS).
+    # MARKS ANY BATCH STUCK IN EXECUTING STATUS AS FAILED AND RESTORES FILES FROM HOLDING.
     # RETURNS THE NUMBER OF RECOVERED BATCHES.
+    # ACQUIRES THE BATCH LOCK TO PREVENT RACING WITH CONCURRENT EXECUTION.
+    import logging
     from sqlalchemy import select
     from .models import TransactionBatch
-    recovered = 0
-    with store.session_factory() as session:
-        crashed = list(session.scalars(
-            select(TransactionBatch).where(TransactionBatch.status == BatchStatus.EXECUTING)
-        ).all())
+    logger = logging.getLogger(__name__)
+    if not _batch_lock.acquire(blocking=True):
+        return 0
+    try:
+        recovered = 0
+        with store.session_factory() as session:
+            crashed = list(session.scalars(
+                select(TransactionBatch).where(TransactionBatch.status == BatchStatus.EXECUTING)
+            ).all())
+            for batch in crashed:
+                batch.status = BatchStatus.FAILED
+                recovered += 1
+                # RESTORE ANY ENTRIES STILL IN HOLDING BACK TO ORIGINAL SOURCE.
+                for entry in session.scalars(
+                    select(TransactionEntry).where(
+                        TransactionEntry.batch_id == batch.id,
+                        TransactionEntry.status == EntryStatus.MOVED_TO_HOLDING,
+                    )
+                ).all():
+                    holding_path = Path(entry.holding_path) if entry.holding_path else None
+                    source_path = Path(entry.source_path)
+                    if holding_path and holding_path.exists():
+                        try:
+                            safe_move(holding_path, source_path)
+                            entry.status = EntryStatus.FAILED
+                            entry.error_message = "Batch crashed — file restored to original location"
+                            entry.holding_path = None
+                            logger.info("Restored %s to %s after crash", holding_path, source_path)
+                        except Exception as exc:
+                            entry.status = EntryStatus.FAILED
+                            entry.error_message = f"Batch crashed — file in holding at {holding_path}: {exc}"
+                            logger.error("Failed to restore %s: %s", holding_path, exc)
+                    else:
+                        entry.status = EntryStatus.FAILED
+                        entry.error_message = "Batch crashed — holding file missing"
+            session.commit()
+        # CLEANUP HOLDING AREAS FOR RECOVERED BATCHES (FILES ALREADY RESTORED ABOVE).
         for batch in crashed:
-            batch.status = BatchStatus.FAILED
-            recovered += 1
-            # MARK ANY ENTRIES STILL IN HOLDING AS FAILED TOO.
-            for entry in session.scalars(
-                select(TransactionEntry).where(
-                    TransactionEntry.batch_id == batch.id,
-                    TransactionEntry.status == EntryStatus.MOVED_TO_HOLDING,
-                )
-            ).all():
-                entry.status = EntryStatus.FAILED
-                entry.error_message = "Batch crashed during execution"
-        session.commit()
-    # CLEANUP HOLDING AREAS FOR RECOVERED BATCHES.
-    for batch in crashed:
-        cleanup_holding_area(batch.id)
-    return recovered
+            cleanup_holding_area(batch.id)
+        return recovered
+    finally:
+        _batch_lock.release()
 
 
 # ------------------------------------------------------------------ #
@@ -283,9 +315,15 @@ def _execute_batch_inner(
             result.errors.append(f"Failed to move {source.name} to holding: {exc}")
             result.failed += 1
             # ROLLBACK: RESTORE FILES ALREADY MOVED TO HOLDING.
-            rollback_partial(moved_to_holding, store)
+            rollback_errors = rollback_partial(moved_to_holding, store)
+            if rollback_errors:
+                result.errors.extend(rollback_errors)
             store.mark_batch(batch_id, BatchStatus.FAILED)
-            cleanup_holding_area(batch_id)
+            # ONLY CLEANUP HOLDING IF ROLLBACK SUCCEEDED FOR ALL FILES.
+            if not rollback_errors:
+                cleanup_holding_area(batch_id)
+            else:
+                result.errors.append("Some files remain in holding — manual cleanup may be needed")
             return result
 
     # PHASE 2: MOVE HOLDING → FINAL DESTINATION.
@@ -295,7 +333,7 @@ def _execute_batch_inner(
         try:
             actual_dest = safe_move(holding_path, destination)
             # VERIFY FILE INTEGRITY AT DESTINATION AGAINST SOURCE HASH.
-            integrity_error = verify_file_integrity(actual_dest, entry.source_hash, entry.source_size)
+            integrity_error, dest_hash = verify_file_integrity(actual_dest, entry.source_hash, entry.source_size)
             if integrity_error:
                 # DESTINATION CORRUPTED — ROLLBACK THIS FILE TO ORIGINAL SOURCE.
                 safe_move(actual_dest, Path(entry.source_path))
@@ -303,8 +341,9 @@ def _execute_batch_inner(
                 result.errors.append(f"Integrity check failed for {entry.source_path}: {integrity_error}")
                 result.failed += 1
                 continue
-            # HASH AT DESTINATION.
-            dest_hash = sha256_file(actual_dest)
+            # USE THE HASH COMPUTED DURING INTEGRITY CHECK (AVOIDS SECOND HASH).
+            if not dest_hash:
+                dest_hash = sha256_file(actual_dest)
             store.update_entry(
                 entry.id,
                 status=EntryStatus.COMPLETED,
@@ -324,9 +363,15 @@ def _execute_batch_inner(
             result.errors.append(f"Failed to move {entry.source_path} to destination: {exc}")
             result.failed += 1
             # ROLLBACK: RESTORE REMAINING HOLDING FILES TO ORIGINAL SOURCE.
-            rollback_remaining(moved_to_holding, completed_entries, store, failed_entry_id=entry.id)
+            rollback_errors = rollback_remaining(moved_to_holding, completed_entries, store, failed_entry_id=entry.id)
+            if rollback_errors:
+                result.errors.extend(rollback_errors)
             store.mark_batch(batch_id, BatchStatus.FAILED)
-            cleanup_holding_area(batch_id)
+            # ONLY CLEANUP HOLDING IF ROLLBACK SUCCEEDED FOR ALL FILES.
+            if not rollback_errors:
+                cleanup_holding_area(batch_id)
+            else:
+                result.errors.append("Some files remain in holding — manual cleanup may be needed")
             return result
 
     # CLEANUP: REMOVE HOLDING AREA AND EMPTY FOLDERS.
@@ -343,16 +388,22 @@ def _execute_batch_inner(
 def rollback_partial(
     moved: list[tuple[TransactionEntry, Path]],
     store: AuditStore,
-) -> None:
+) -> list[str]:
     # RESTORES FILES FROM HOLDING BACK TO ORIGINAL SOURCE (PARTIAL ROLLBACK).
+    # RETURNS A LIST OF ERRORS (EMPTY IF ALL RESTORED SUCCESSFULLY).
+    import logging
+    logger = logging.getLogger(__name__)
+    errors: list[str] = []
     for entry, holding_path in reversed(moved):
         source = Path(entry.source_path)
         try:
             if holding_path.exists():
                 safe_move(holding_path, source)
                 store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(f"Failed to restore {holding_path} to {source}: {exc}")
+            logger.error("Rollback failed for %s: %s", holding_path, exc)
+    return errors
 
 
 def rollback_remaining(
@@ -360,9 +411,13 @@ def rollback_remaining(
     completed: list[tuple[TransactionEntry, Path]],
     store: AuditStore,
     failed_entry_id: int | None = None,
-) -> None:
+) -> list[str]:
     # RESTORES UNCOMPLETED HOLDING FILES TO ORIGINAL SOURCES.
     # SKIPS THE ENTRY THAT TRIGGERED THE FAILURE (ALREADY MARKED FAILED).
+    # RETURNS A LIST OF ERRORS (EMPTY IF ALL RESTORED SUCCESSFULLY).
+    import logging
+    logger = logging.getLogger(__name__)
+    errors: list[str] = []
     completed_ids = {e.id for e, _ in completed}
     for entry, holding_path in reversed(all_moved):
         if entry.id in completed_ids:
@@ -373,8 +428,10 @@ def rollback_remaining(
                 safe_move(holding_path, source)
                 if entry.id != failed_entry_id:
                     store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(f"Failed to restore {holding_path} to {source}: {exc}")
+            logger.error("Rollback failed for %s: %s", holding_path, exc)
+    return errors
 
 
 # ------------------------------------------------------------------ #
@@ -388,32 +445,38 @@ def undo_batch(
     progress_callback=None,
 ) -> list[str]:
     # REVERSES ALL COMPLETED ENTRIES IN A BATCH, NEWEST FIRST.
-    errors: list[str] = []
-    entries = store.get_entries_by_batch(batch_id, status=EntryStatus.COMPLETED)
-    if not entries:
-        return ["No completed entries to undo"]
+    # ACQUIRES THE BATCH LOCK TO PREVENT RACING WITH CONCURRENT EXECUTION.
+    if not _batch_lock.acquire(blocking=True):
+        return ["Another batch operation is in progress"]
+    try:
+        errors: list[str] = []
+        entries = store.get_entries_by_batch(batch_id, status=EntryStatus.COMPLETED)
+        if not entries:
+            return ["No completed entries to undo"]
 
-    for entry in reversed(entries):
-        destination = Path(entry.destination_path)
-        source = Path(entry.source_path)
-        if not destination.exists():
-            errors.append(f"Destination file missing: {entry.destination_path}")
-            store.update_entry(entry.id, status=EntryStatus.UNDONE, error_message="Destination missing")
-            continue
-        try:
-            safe_move(destination, source)
-            store.update_entry(entry.id, status=EntryStatus.UNDONE)
-            if progress_callback:
-                progress_callback(f"Undone: {destination.name}")
-        except Exception as exc:
-            errors.append(f"Failed to undo {entry.destination_path}: {exc}")
-            store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=str(exc))
+        for entry in reversed(entries):
+            destination = Path(entry.destination_path)
+            source = Path(entry.source_path)
+            if not destination.exists():
+                errors.append(f"Destination file missing: {entry.destination_path}")
+                store.update_entry(entry.id, status=EntryStatus.UNDONE, error_message="Destination missing")
+                continue
+            try:
+                safe_move(destination, source)
+                store.update_entry(entry.id, status=EntryStatus.UNDONE)
+                if progress_callback:
+                    progress_callback(f"Undone: {destination.name}")
+            except Exception as exc:
+                errors.append(f"Failed to undo {entry.destination_path}: {exc}")
+                store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=str(exc))
 
-    store.mark_batch(batch_id, BatchStatus.UNDONE, undone_at=datetime.now(UTC).replace(tzinfo=None))
-    cleanup_holding_area(batch_id)
-    # CLEANUP EMPTY CATEGORY FOLDERS LEFT BY UNDO.
-    dest_dirs = {Path(e.destination_path).parent for e in entries if e.destination_path}
-    if dest_dirs:
-        undo_root = Path(os.path.commonpath([str(d) for d in dest_dirs]))
-        cleanup_empty_folders(undo_root)
-    return errors
+        store.mark_batch(batch_id, BatchStatus.UNDONE, undone_at=datetime.now(UTC).replace(tzinfo=None))
+        cleanup_holding_area(batch_id)
+        # CLEANUP EMPTY CATEGORY FOLDERS LEFT BY UNDO.
+        dest_dirs = {Path(e.destination_path).parent for e in entries if e.destination_path}
+        if dest_dirs:
+            undo_root = Path(os.path.commonpath([str(d) for d in dest_dirs]))
+            cleanup_empty_folders(undo_root)
+        return errors
+    finally:
+        _batch_lock.release()

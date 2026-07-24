@@ -91,11 +91,13 @@ def _run_scan(args) -> int:
     extract_documents = not args.no_document_text
     store = AuditStore()
     # LOAD PROFILE IF SPECIFIED AND APPLY ITS SETTINGS.
+    profile = ProfileConfig()
     if args.profile:
         loaded = load_profile_by_name(store, args.profile)
         if loaded is None:
             print(f"Warning: Profile '{args.profile}' not found. Using defaults.", file=sys.stderr)
         else:
+            profile = loaded
             if loaded.excluded_folders:
                 print(f"Profile '{args.profile}': excluding {len(loaded.excluded_folders)} folders.")
             if loaded.custom_protected_patterns:
@@ -103,8 +105,14 @@ def _run_scan(args) -> int:
             if not loaded.document_extraction:
                 extract_documents = False
     settings = ScanSettings(args.folder, extract_documents=extract_documents)
-    scan_engine = ScanEngine(settings, store)
-    scan_result = scan_engine.run(print)
+    # USE PHASE TWO PIPELINE IF PROFILE HAS EXCLUSIONS, OTHERWISE SINGLE-PHASE SCAN.
+    excluded_folders = set(profile.excluded_folders) if profile.excluded_folders else None
+    if excluded_folders:
+        scan_engine = ScanEngine(settings, store)
+        scan_result = scan_engine.run_phase_two(excluded_folders, print)
+    else:
+        scan_engine = ScanEngine(settings, store)
+        scan_result = scan_engine.run(print)
     write_manifest(scan_result, args.output)
     print(f"Scanned {len(scan_result.rows)} files; found {scan_result.duplicate_count} duplicates. Manifest: {args.output}")
     for scan_error in scan_result.errors:
@@ -249,7 +257,7 @@ def _run_organize(args) -> int:
 def _run_execute(args) -> int:
     store = AuditStore()
     # DETERMINE PROFILE ID.
-    profile_id = 1
+    profile_id = None
     if args.profile:
         loaded = load_profile_by_name(store, args.profile)
         if loaded is None:
@@ -258,7 +266,7 @@ def _run_execute(args) -> int:
             return 1
         profile_id = loaded.profile_id
     # CHECK FOR APPROVED ACTIONS.
-    actions = store.get_proposed_actions(profile_id)
+    actions = store.get_proposed_actions(profile_id or 1)
     approved = [a for a in actions if a.approved]
     if not approved:
         print("No approved actions to execute.", file=sys.stderr)
@@ -274,7 +282,7 @@ def _run_execute(args) -> int:
         return 0
     # PREPARE AND EXECUTE.
     from .journal import prepare_execution, run_execution
-    batch_id, count = prepare_execution(store, profile_id, f"{len(approved)} file moves via CLI")
+    batch_id, count = prepare_execution(store, profile_id or 1, f"{len(approved)} file moves via CLI")
     if batch_id == 0:
         print("Failed to create execution batch.", file=sys.stderr)
         store.close()

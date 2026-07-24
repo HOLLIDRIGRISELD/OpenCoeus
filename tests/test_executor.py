@@ -93,32 +93,33 @@ class VerifyFileIntegrityTests(unittest.TestCase):
             f.write_text("verify me")
             h = sha256_file(f)
             s = f.stat().st_size
-            result = verify_file_integrity(f, h, s)
-            self.assertIsNone(result)
+            error, actual_hash = verify_file_integrity(f, h, s)
+            self.assertIsNone(error)
+            self.assertEqual(actual_hash, h)
 
     def test_hash_mismatch(self):
         # VERIFIES THAT AN ERROR IS RETURNED WHEN HASH DOES NOT MATCH.
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "test.txt"
             f.write_text("data")
-            result = verify_file_integrity(f, "wrong_hash", f.stat().st_size)
-            self.assertIsNotNone(result)
-            self.assertIn("Hash mismatch", result)
+            error, _ = verify_file_integrity(f, "wrong_hash", f.stat().st_size)
+            self.assertIsNotNone(error)
+            self.assertIn("Hash mismatch", error)
 
     def test_size_mismatch(self):
         # VERIFIES THAT AN ERROR IS RETURNED WHEN SIZE DOES NOT MATCH.
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "test.txt"
             f.write_text("data")
-            result = verify_file_integrity(f, "", 999999)
-            self.assertIsNotNone(result)
-            self.assertIn("Size mismatch", result)
+            error, _ = verify_file_integrity(f, "", 999999)
+            self.assertIsNotNone(error)
+            self.assertIn("Size mismatch", error)
 
     def test_file_missing(self):
         # VERIFIES THAT AN ERROR IS RETURNED WHEN FILE DOES NOT EXIST.
-        result = verify_file_integrity(Path("/nonexistent/file.txt"), "", 0)
-        self.assertIsNotNone(result)
-        self.assertIn("not found", result)
+        error, _ = verify_file_integrity(Path("/nonexistent/file.txt"), "", 0)
+        self.assertIsNotNone(error)
+        self.assertIn("not found", error)
 
 
 class HoldingAreaTests(unittest.TestCase):
@@ -975,6 +976,135 @@ class FullDBStateVerificationTests(unittest.TestCase):
             finally:
                 executor_mod.HOLDING_ROOT = original
 
+
+class CrashRecoveryRestoreTests(unittest.TestCase):
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def _make_profile(self, store):
+        profile = store.create_profile("test")
+        return profile.id
+
+    def test_recover_restores_files_to_original_location(self):
+        # VERIFIES THAT CRASH RECOVERY RESTORES HOLDING FILES BACK TO ORIGINAL SOURCE.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            executor_mod.HOLDING_ROOT = Path(tmp) / "transactions"
+            try:
+                store = self._make_store()
+                profile_id = self._make_profile(store)
+                src = Path(tmp) / "original.txt"
+                src.write_text("important data")
+                from opencoeus.models import BatchStatus, EntryStatus
+                batch = store.create_batch(profile_id, "crash test")
+                entry = store.add_entry(
+                    batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
+                    source_hash=sha256_file(src), source_size=src.stat().st_size,
+                )
+                # SIMULATE PARTIAL EXECUTION: MOVE FILE TO HOLDING AND SET STATUS.
+                holding_dir = executor_mod.create_holding_area(batch.id)
+                held = executor_mod.safe_move(src, holding_dir / src.name)
+                store.update_entry(entry.id, status=EntryStatus.MOVED_TO_HOLDING, holding_path=str(held))
+                store.mark_batch(batch.id, BatchStatus.EXECUTING)
+                # VERIFY FILE IS IN HOLDING, NOT AT SOURCE.
+                self.assertFalse(src.exists())
+                self.assertTrue(held.exists())
+                # RUN RECOVERY.
+                recovered = executor_mod.recover_crashed_batches(store)
+                self.assertEqual(recovered, 1)
+                # VERIFY FILE IS RESTORED TO ORIGINAL LOCATION.
+                self.assertTrue(src.exists())
+                self.assertEqual(src.read_text(), "important data")
+                # VERIFY HOLDING AREA IS CLEANED UP.
+                self.assertFalse(executor_mod.get_holding_dir(batch.id).exists())
+                store.close()
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_recover_handles_missing_holding_file(self):
+        # VERIFIES THAT RECOVERY HANDLES CASE WHERE HOLDING FILE IS ALREADY GONE.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            executor_mod.HOLDING_ROOT = Path(tmp) / "transactions"
+            try:
+                store = self._make_store()
+                profile_id = self._make_profile(store)
+                src = Path(tmp) / "gone.txt"
+                from opencoeus.models import BatchStatus, EntryStatus
+                batch = store.create_batch(profile_id, "missing holding test")
+                entry = store.add_entry(
+                    batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
+                    source_hash="", source_size=0,
+                )
+                store.update_entry(entry.id, status=EntryStatus.MOVED_TO_HOLDING, holding_path="/nonexistent/path")
+                store.mark_batch(batch.id, BatchStatus.EXECUTING)
+                recovered = executor_mod.recover_crashed_batches(store)
+                self.assertEqual(recovered, 1)
+                # VERIFY ENTRY IS MARKED FAILED.
+                entries = store.get_entries_by_batch(batch.id)
+                self.assertEqual(entries[0].status, EntryStatus.FAILED)
+                self.assertIn("holding file missing", entries[0].error_message)
+                store.close()
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+
+class RollbackErrorReturnTests(unittest.TestCase):
+    def _make_store(self):
+        import tempfile as _tmp
+        tmp_dir = _tmp.mkdtemp()
+        url = f"sqlite:///{Path(tmp_dir) / 'test.sqlite3'}"
+        return AuditStore(url)
+
+    def _make_profile(self, store):
+        profile = store.create_profile("test")
+        return profile.id
+
+    def test_rollback_partial_returns_empty_on_success(self):
+        # VERIFIES THAT ROLLBACK_PARTIAL RETURNS EMPTY LIST WHEN ALL FILES RESTORE.
+        import opencoeus.executor as executor_mod
+        original = executor_mod.HOLDING_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            executor_mod.HOLDING_ROOT = Path(tmp) / "transactions"
+            try:
+                store = self._make_store()
+                profile_id = self._make_profile(store)
+                src = Path(tmp) / "file.txt"
+                src.write_text("data")
+                batch = store.create_batch(profile_id, "rollback test")
+                entry = store.add_entry(
+                    batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
+                    source_hash=sha256_file(src), source_size=src.stat().st_size,
+                )
+                holding_dir = executor_mod.create_holding_area(batch.id)
+                held = executor_mod.safe_move(src, holding_dir / src.name)
+                from opencoeus.models import EntryStatus
+                store.update_entry(entry.id, status=EntryStatus.MOVED_TO_HOLDING, holding_path=str(held))
+                errors = executor_mod.rollback_partial([(entry, held)], store)
+                self.assertEqual(errors, [])
+                self.assertTrue(src.exists())
+                store.close()
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
+    def test_rollback_remaining_returns_errors_on_failure(self):
+        # VERIFIES THAT ROLLBACK_REMAINING RETURNS ERRORS FOR FILES THAT FAILED TO RESTORE.
+        import types, tempfile
+        from opencoeus.executor import rollback_remaining
+        with tempfile.TemporaryDirectory() as tmp:
+            # CREATE A REAL HOLDING FILE BUT TARGET AN UNWRITABLE DESTINATION.
+            holding = Path(tmp) / "holding.txt"
+            holding.write_text("data")
+            unwritable_source = Path(tmp) / "nonexistent_parent" / "file.txt"
+            entry = types.SimpleNamespace(id=999, source_path=str(unwritable_source))
+            errors = rollback_remaining([(entry, holding)], [], None, None)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Failed to restore", errors[0])
 
 if __name__ == "__main__":
     unittest.main()

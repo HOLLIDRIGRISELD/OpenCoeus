@@ -114,6 +114,7 @@ class PhaseTwoWorker(QThread):
 
 class ExportWorker(QThread):
     finished_export = pyqtSignal(str)
+    failed = pyqtSignal(str)
 
     def __init__(self, scan_result: ScanResult, path: Path) -> None:
         super().__init__()
@@ -121,8 +122,11 @@ class ExportWorker(QThread):
         self.path = path
 
     def run(self) -> None:
-        write_manifest(self.scan_result, self.path)
-        self.finished_export.emit(str(self.path))
+        try:
+            write_manifest(self.scan_result, self.path)
+            self.finished_export.emit(str(self.path))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class ExecutionWorker(QThread):
@@ -149,6 +153,25 @@ class ExecutionWorker(QThread):
             result.errors = [f"Execution crashed: {exc}"]
             result.batch_id = self.batch_id
             self.finished_execution.emit(result)
+
+
+class PrepareWorker(QThread):
+    finished_preparation = pyqtSignal(int, int)
+    failed = pyqtSignal(str)
+
+    def __init__(self, store: AuditStore, profile_id: int, description: str) -> None:
+        super().__init__()
+        self.store = store
+        self.profile_id = profile_id
+        self.description = description
+
+    def run(self) -> None:
+        try:
+            from .journal import prepare_execution
+            batch_id, count = prepare_execution(self.store, self.profile_id, self.description)
+            self.finished_preparation.emit(batch_id, count)
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class UndoWorker(QThread):
@@ -447,6 +470,7 @@ class MainWindow(QMainWindow):
         self.phase_one_worker: PhaseOneWorker | None = None
         self.phase_two_worker: PhaseTwoWorker | None = None
         self.execution_worker: ExecutionWorker | None = None
+        self.prepare_worker: PrepareWorker | None = None
         self.undo_worker: UndoWorker | None = None
         self._action_id_map: dict[str, int] = {}
         self._nav_buttons: list[SidebarButton] = []
@@ -883,7 +907,7 @@ class MainWindow(QMainWindow):
         t = self.results_table
         # COLLECT DUPLICATE ROWS AND GROUP BY ORIGINAL PATH.
         groups: dict[str, list[int]] = {}
-        all_rows: list[tuple[int, str, str, str]] = []
+        row_data: dict[int, tuple[str, str, str]] = {}
         for r in range(t.rowCount()):
             status_item = t.item(r, 2)
             if not status_item or status_item.text() != "DUPLICATE":
@@ -897,19 +921,13 @@ class MainWindow(QMainWindow):
             if search_text and search_text not in path_text and search_text not in title_text:
                 continue
             groups.setdefault(orig_path, []).append(r)
-            all_rows.append((r, orig_path, path_text, title_text))
-        # SORT BY ORIGINAL PATH SO GROUPS ARE TOGETHER.
-        sorted_rows = sorted(all_rows, key=lambda x: x[1])
+            row_data[r] = (orig_path, path_text, title_text)
         # HIDE ALL, THEN SHOW GROUPED ROWS IN ORDER.
         for r in range(t.rowCount()):
             t.setRowHidden(r, True)
-        display_row = 0
-        group_index = 0
-        for orig_path, _ in groups.items():
-            for r, _, _, _ in sorted_rows:
-                if all_rows[r][1] == orig_path:
-                    t.setRowHidden(r, False)
-                    group_index += 1
+        for orig_path in groups:
+            for r in groups[orig_path]:
+                t.setRowHidden(r, False)
 
     # -- ACTIONS PAGE ----------------------------------------------------- #
     def _build_actions_page(self) -> QWidget:
@@ -1231,10 +1249,17 @@ class MainWindow(QMainWindow):
             # CAP LOG AT 5000 LINES TO PREVENT UNBOUNDED MEMORY GROWTH.
             doc = self.audit_log.document()
             if doc.blockCount() > 5000:
-                cursor = doc.rootFrame().firstPosition()
-                cursor_end = doc.findPositionByBlockNumber(doc.blockCount() - 5000)
-                cursor.select(cursor.SelectionType.DocumentUnderCursor)
+                from PyQt6.QtGui import QTextCursor
+                cursor = self.audit_log.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+                cursor.movePosition(
+                    QTextCursor.MoveOperation.NextBlock,
+                    QTextCursor.MoveOperation.MoveAnchor,
+                    doc.blockCount() - 5000,
+                )
+                cursor.select(QTextCursor.SelectionType.DocumentUnderCursor)
                 cursor.removeSelectedText()
+                self.audit_log.setTextCursor(cursor)
         self._log_timer.stop()
 
     # ------------------------------------------------------------------ #
@@ -1314,19 +1339,17 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _cleanup_workers(self) -> None:
         for worker in (self.phase_one_worker, self.phase_two_worker,
-                       self.execution_worker, self.undo_worker):
+                       self.execution_worker, self.prepare_worker, self.undo_worker):
             if worker is None:
                 continue
             worker.blockSignals(True)
             if worker.isRunning():
                 worker.quit()
-            worker.wait(5000)
-            if worker.isRunning():
-                worker.terminate()
-                worker.wait(2000)
+            worker.wait(8000)
         self.phase_one_worker = None
         self.phase_two_worker = None
         self.execution_worker = None
+        self.prepare_worker = None
         self.undo_worker = None
 
     def closeEvent(self, event) -> None:
@@ -1405,6 +1428,8 @@ class MainWindow(QMainWindow):
         # GUARD: PREVENT DOUBLE-ACTIVATION.
         if self.execution_worker and self.execution_worker.isRunning():
             return
+        if self.prepare_worker and self.prepare_worker.isRunning():
+            return
         profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
         approved_count = sum(
             1 for r in range(self.actions_table.rowCount())
@@ -1419,23 +1444,18 @@ class MainWindow(QMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        # SHOW PROGRESS BAR BEFORE BLOCKING ON prepare_execution.
+        # SHOW PROGRESS BAR AND START PREPARATION WORKER.
         self.progress_bar.show()
         self._status.showMessage("Preparing execution...")
         self.execute_btn.setEnabled(False)
         self.undo_btn.setEnabled(False)
-        try:
-            from .journal import prepare_execution
-            batch_id, count = prepare_execution(
-                self.store, profile_id, f"{approved_count} file moves from UI"
-            )
-        except Exception as exc:
-            self.progress_bar.hide()
-            self.execute_btn.setEnabled(True)
-            self.undo_btn.setEnabled(True)
-            self._on_log_message(f"Preparation failed: {exc}")
-            QMessageBox.critical(self, "Execution", f"Preparation failed:\n{exc}")
-            return
+        self.prepare_worker = PrepareWorker(self.store, profile_id, f"{approved_count} file moves from UI")
+        self.prepare_worker.finished_preparation.connect(self._on_preparation_done)
+        self.prepare_worker.failed.connect(self._on_preparation_failed)
+        self.prepare_worker.start()
+
+    def _on_preparation_done(self, batch_id: int, count: int) -> None:
+        self.prepare_worker = None
         if batch_id == 0:
             self.progress_bar.hide()
             self.execute_btn.setEnabled(True)
@@ -1447,6 +1467,14 @@ class MainWindow(QMainWindow):
         self.execution_worker.message.connect(self._on_log_message)
         self.execution_worker.finished_execution.connect(self._on_execution_done)
         self.execution_worker.start()
+
+    def _on_preparation_failed(self, msg: str) -> None:
+        self.prepare_worker = None
+        self.progress_bar.hide()
+        self.execute_btn.setEnabled(True)
+        self.undo_btn.setEnabled(True)
+        self._on_log_message(f"Preparation failed: {msg}")
+        QMessageBox.critical(self, "Execution", f"Preparation failed:\n{msg}")
 
     def _on_execution_done(self, result) -> None:
         # HANDLES COMPLETION OF AN EXECUTION BATCH.
