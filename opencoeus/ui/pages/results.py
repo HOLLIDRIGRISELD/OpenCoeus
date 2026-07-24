@@ -96,14 +96,14 @@ class ResultsPage(QWidget):
         self.results_table.setSortingEnabled(False)
 
         rows = []
-        for entry in result.scanned_files:
-            name = entry.get("name", "")
-            path = entry.get("path", "")
-            size = entry.get("size", 0)
-            modified = entry.get("modified", "")
-            status = entry.get("status", "")
-            file_hash = entry.get("hash", "")
-            group = entry.get("group", "")
+        for entry in result.rows:
+            name = entry.suggested_title or os.path.basename(entry.path)
+            path = entry.path
+            size = entry.size
+            modified = entry.modified_at
+            status = entry.status
+            file_hash = entry.sha256
+            group = entry.duplicate_of
 
             rows.append((name, path, size, modified, status, file_hash, group))
 
@@ -174,14 +174,14 @@ class ResultsPage(QWidget):
         self.results_table.setRowCount(0)
 
         rows = []
-        for entry in self._raw_results.scanned_files:
-            name = entry.get("name", "")
-            path = entry.get("path", "")
-            size = entry.get("size", 0)
-            modified = entry.get("modified", "")
-            status = entry.get("status", "")
-            file_hash = entry.get("hash", "")
-            group = entry.get("group", "")
+        for entry in self._raw_results.rows:
+            name = entry.suggested_title or os.path.basename(entry.path)
+            path = entry.path
+            size = entry.size
+            modified = entry.modified_at
+            status = entry.status
+            file_hash = entry.sha256
+            group = entry.duplicate_of
 
             # APPLY FILTER
             if filter_text == "Duplicates Only" and status != "duplicate":
@@ -243,11 +243,11 @@ class ResultsPage(QWidget):
         self.results_table.setRowCount(0)
 
         # BUILD GROUPS BY HASH
-        groups: dict[str, list[dict]] = {}
-        for entry in self._raw_results.scanned_files:
-            if entry.get("status") != "duplicate":
+        groups: dict[str, list] = {}
+        for entry in self._raw_results.rows:
+            if entry.status != "duplicate":
                 continue
-            h = entry.get("hash", "")
+            h = entry.sha256
             if not h:
                 continue
             groups.setdefault(h, []).append(entry)
@@ -257,12 +257,12 @@ class ResultsPage(QWidget):
             original = entries[0] if entries else None
             if original is None:
                 continue
-            name = original.get("name", "")
-            path = original.get("path", "")
-            size = original.get("size", 0)
-            modified = original.get("modified", "")
-            file_hash = original.get("hash", "")
-            group = original.get("group", "")
+            name = original.suggested_title or os.path.basename(original.path)
+            path = original.path
+            size = original.size
+            modified = original.modified_at
+            file_hash = original.sha256
+            group = original.duplicate_of
             dup_count = len(entries) - 1
 
             # APPLY SEARCH

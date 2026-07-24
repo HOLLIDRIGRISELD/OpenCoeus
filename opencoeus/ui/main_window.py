@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
         self.execution_worker: ExecutionWorker | None = None
         self.prepare_worker: PrepareWorker | None = None
         self.undo_worker: UndoWorker | None = None
+        self.export_worker: ExportWorker | None = None
 
         # LOG BUFFER.
         self._log_buffer: list[str] = []
@@ -319,7 +320,7 @@ class MainWindow(QMainWindow):
 
         execute_action = QAction("&Execute Approved", self)
         execute_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
-        execute_action.triggered.connect(self.actions_page._execute_approved)
+        execute_action.triggered.connect(self.actions_page._execute_batch)
         actions_menu.addAction(execute_action)
 
         undo_action = QAction("&Undo Last Batch", self)
@@ -478,10 +479,115 @@ class MainWindow(QMainWindow):
             )
             self.export_worker.start()
 
+    # ---- EXECUTE APPROVED ACTIONS ---- #
+    def _execute_approved(self) -> None:
+        if self.prepare_worker and self.prepare_worker.isRunning():
+            return
+        if self.execution_worker and self.execution_worker.isRunning():
+            return
+        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else 1
+        approved_count = sum(
+            1 for r in range(self.actions_page.actions_table.rowCount())
+            if self.actions_page.actions_table.item(r, 0)
+            and self.actions_page.actions_table.item(r, 0).text().isdigit()
+        )
+        if approved_count == 0:
+            QMessageBox.information(self, "Execute", "No actions to execute.")
+            return
+        confirm = QMessageBox.question(
+            self, "Execute Actions",
+            f"Execute {approved_count} approved file moves?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self.progress_bar.show()
+        self.status_bar.showMessage("Preparing execution...")
+        self._cleanup_workers()
+        self.prepare_worker = PrepareWorker(self.store, profile_id, f"{approved_count} file moves from UI")
+        self.prepare_worker.finished_preparation.connect(self._on_preparation_done)
+        self.prepare_worker.failed.connect(self._on_preparation_failed)
+        self.prepare_worker.start()
+
+    def _on_preparation_done(self, batch_id: int, count: int) -> None:
+        self.prepare_worker = None
+        if batch_id == 0:
+            self.progress_bar.hide()
+            QMessageBox.warning(self, "Execute", "No actions to execute.")
+            return
+        self.status_bar.showMessage(f"Executing batch {batch_id}...")
+        self.execution_worker = ExecutionWorker(batch_id, self.store)
+        self.execution_worker.message.connect(self._on_log_message)
+        self.execution_worker.finished_execution.connect(self._on_execution_done)
+        self.execution_worker.start()
+
+    def _on_preparation_failed(self, msg: str) -> None:
+        self.prepare_worker = None
+        self.progress_bar.hide()
+        self._on_log_message(f"Preparation failed: {msg}")
+        QMessageBox.critical(self, "Execution", f"Preparation failed:\n{msg}")
+
+    def _on_execution_done(self, result) -> None:
+        self.progress_bar.hide()
+        self.execution_worker = None
+        self.actions_page.refresh_actions_count()
+        self.actions_page.refresh_batch_history()
+        msg = f"Execution complete: {result.completed} completed, {result.failed} failed."
+        self.status_bar.showMessage(msg, 5000)
+        self._on_log_message(f"<b>{msg}</b>")
+        if result.errors:
+            for error in result.errors:
+                self._on_log_message(f"  ERROR: {error}")
+        if result.failed > 0:
+            QMessageBox.warning(self, "Execution", f"{result.failed} files failed to move.\nCheck the log for details.")
+        else:
+            QMessageBox.information(self, "Execution", f"Successfully moved {result.completed} files.")
+
+    # ---- UNDO LAST BATCH ---- #
+    def _undo_last_batch(self) -> None:
+        if self.undo_worker and self.undo_worker.isRunning():
+            return
+        profile_id = self.current_profile.profile_id if self.current_profile and self.current_profile.profile_id else None
+        batches = self.store.get_undoable_batches(profile_id)
+        if not batches:
+            QMessageBox.information(self, "Undo", "No completed batches to undo.")
+            return
+        batch = batches[0]
+        from ..models import EntryStatus
+        entry_count = len(self.store.get_entries_by_batch(batch.id, status=EntryStatus.COMPLETED))
+        confirm = QMessageBox.question(
+            self, "Undo Batch",
+            f"Undo batch from {batch.created_at}?\n{entry_count} files will be moved back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._cleanup_workers()
+        self.progress_bar.show()
+        self.status_bar.showMessage(f"Undoing batch {batch.id}...")
+        self.undo_worker = UndoWorker(batch.id, self.store)
+        self.undo_worker.message.connect(self._on_log_message)
+        self.undo_worker.finished_undo.connect(self._on_undo_done)
+        self.undo_worker.start()
+
+    def _on_undo_done(self, errors: list) -> None:
+        self.progress_bar.hide()
+        self.undo_worker = None
+        self.actions_page.refresh_actions_count()
+        self.actions_page.refresh_batch_history()
+        if errors:
+            for error in errors:
+                self._on_log_message(f"  WARNING: {error}")
+            QMessageBox.warning(self, "Undo", f"Undo completed with {len(errors)} warnings.")
+        else:
+            self.status_bar.showMessage("Undo complete.", 5000)
+            QMessageBox.information(self, "Undo", "Batch undone. Files restored.")
+
     # ---- THREAD CLEANUP ---- #
     def _cleanup_workers(self) -> None:
         for worker in (self.phase_one_worker, self.phase_two_worker,
-                       self.execution_worker, self.prepare_worker, self.undo_worker):
+                       self.execution_worker, self.prepare_worker,
+                       self.undo_worker, self.export_worker):
             if worker is None:
                 continue
             worker.blockSignals(True)
@@ -493,6 +599,7 @@ class MainWindow(QMainWindow):
         self.execution_worker = None
         self.prepare_worker = None
         self.undo_worker = None
+        self.export_worker = None
 
     def closeEvent(self, event) -> None:
         self._cleanup_workers()

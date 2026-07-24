@@ -118,29 +118,29 @@ class ActionsPage(QWidget):
 
     # ── FILL ACTIONS ───────────────────────────────────────────────────────
 
-    def fill_actions(self, matches: list[RuleMatch], action_id_map: dict[int, int]):
+    def fill_actions(self, matches: list[RuleMatch], action_id_map: dict[str, int]):
         """POPULATE ACTIONS TABLE FROM RULE MATCHES."""
         self._action_id_map = action_id_map
         self.actions_table.setSortingEnabled(False)
         self.actions_table.setRowCount(len(matches))
 
         for r, match in enumerate(matches):
-            db_id = action_id_map.get(r, r)
+            db_id = action_id_map.get(match.original_path, 0)
 
-            id_item = QTableWidgetItem(str(db_id))
+            id_item = QTableWidgetItem(str(db_id) if db_id else "")
             id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            action_item = QTableWidgetItem(match.action)
-            action_item.setToolTip(match.action)
+            action_item = QTableWidgetItem(match.action_type.upper())
+            action_item.setToolTip(match.action_type)
 
-            source_item = QTableWidgetItem(truncate_path(match.source))
-            source_item.setToolTip(match.source)
+            source_item = QTableWidgetItem(truncate_path(match.original_path))
+            source_item.setToolTip(match.original_path)
 
-            target_item = QTableWidgetItem(truncate_path(match.target))
-            target_item.setToolTip(match.target)
+            target_item = QTableWidgetItem(truncate_path(match.proposed_path))
+            target_item.setToolTip(match.proposed_path)
 
-            rule_item = QTableWidgetItem(match.rule_name)
-            rule_item.setToolTip(match.rule_name)
+            rule_item = QTableWidgetItem(str(match.rule_id) if match.rule_id else "")
+            rule_item.setToolTip(match.reason)
 
             self.actions_table.setItem(r, 0, id_item)
             self.actions_table.setItem(r, 1, action_item)
@@ -227,22 +227,32 @@ class ActionsPage(QWidget):
             return
 
         store: AuditStore = self._main.store
-        batches = store.get_batch_history()
+        profile_id = None
+        if hasattr(self._main, "current_profile") and self._main.current_profile:
+            profile_id = self._main.current_profile.profile_id
+
+        all_batches = store.get_all_batches(profile_id, limit=20)
+        batch_ids = [b.id for b in all_batches]
+        entry_counts = store.get_batch_entry_counts(batch_ids)
+
         self.batch_table.setSortingEnabled(False)
-        self.batch_table.setRowCount(len(batches))
+        self.batch_table.setRowCount(len(all_batches))
 
-        for r, batch in enumerate(batches):
-            batch_id = str(batch.get("id", ""))
-            timestamp = str(batch.get("timestamp", ""))
-            actions_count = str(batch.get("actions_count", ""))
-            status = str(batch.get("status", ""))
-            profile = str(batch.get("profile", ""))
+        for r, batch in enumerate(all_batches):
+            batch_id_item = QTableWidgetItem(str(batch.id))
+            desc_item = QTableWidgetItem(batch.description or "—")
 
-            self.batch_table.setItem(r, 0, QTableWidgetItem(batch_id))
-            self.batch_table.setItem(r, 1, QTableWidgetItem(timestamp))
-            self.batch_table.setItem(r, 2, QTableWidgetItem(actions_count))
-            self.batch_table.setItem(r, 3, QTableWidgetItem(status))
-            self.batch_table.setItem(r, 4, QTableWidgetItem(profile))
+            status_item = QTableWidgetItem(batch.status.upper())
+            count_item = QTableWidgetItem(str(entry_counts.get(batch.id, 0)))
+
+            date_str = batch.completed_at or batch.undone_at or batch.created_at
+            date_item = QTableWidgetItem(str(date_str)[:19] if date_str else "—")
+
+            self.batch_table.setItem(r, 0, batch_id_item)
+            self.batch_table.setItem(r, 1, desc_item)
+            self.batch_table.setItem(r, 2, status_item)
+            self.batch_table.setItem(r, 3, count_item)
+            self.batch_table.setItem(r, 4, date_item)
 
         self.batch_table.setSortingEnabled(True)
 
@@ -258,46 +268,21 @@ class ActionsPage(QWidget):
             return
 
         store: AuditStore = self._main.store
-        batch_details = store.get_batch_details(batch_id)
-        dialog = BatchDetailDialog(self, batch_details=batch_details)
+        dialog = BatchDetailDialog(store, batch_id, parent=self)
         dialog.exec()
 
     # ── EXECUTE / UNDO ────────────────────────────────────────────────────
 
     def _execute_batch(self):
-        """EXECUTE ALL APPROVED ACTIONS AS A BATCH."""
-        if self._main is None or not hasattr(self._main, "store") or self._main.store is None:
+        """DELEGATE BATCH EXECUTION TO MAIN WINDOW."""
+        if self._main is None:
             return
-
-        reply = QMessageBox.question(
-            self,
-            "Execute Batch",
-            "Execute all approved actions?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        store: AuditStore = self._main.store
-        store.execute_batch()
-        self.refresh_actions_count()
-        self.refresh_batch_history()
+        if hasattr(self._main, "_execute_approved"):
+            self._main._execute_approved()
 
     def _undo_last_batch(self):
-        """UNDO THE LAST EXECUTED BATCH."""
-        if self._main is None or not hasattr(self._main, "store") or self._main.store is None:
+        """DELEGATE UNDO TO MAIN WINDOW."""
+        if self._main is None:
             return
-
-        reply = QMessageBox.question(
-            self,
-            "Undo Batch",
-            "Undo the last executed batch?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        store: AuditStore = self._main.store
-        store.undo_last_batch()
-        self.refresh_actions_count()
-        self.refresh_batch_history()
+        if hasattr(self._main, "_undo_last_batch"):
+            self._main._undo_last_batch()
