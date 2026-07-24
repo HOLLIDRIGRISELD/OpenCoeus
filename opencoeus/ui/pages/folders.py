@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
@@ -39,7 +40,6 @@ class FoldersPage(QWidget):
         self.tree.setAlternatingRowColors(True)
         self.tree.setSortingEnabled(True)
         self.tree.setColumnWidth(0, 320)
-        self.tree.verticalHeader().setVisible(False)
         self.tree.setRootIsDecorated(True)
         self.tree.itemChanged.connect(self._on_folder_toggled)
 
@@ -85,7 +85,7 @@ class FoldersPage(QWidget):
             class_color = "#c678dd"
         elif node.classification == "archive":
             class_color = "#e06c75"
-        item.setForeground(3, self.palette().color(class_color if False else 0))
+        item.setForeground(3, QColor(class_color))
 
         # TRI-STATE CHECKBOX
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
