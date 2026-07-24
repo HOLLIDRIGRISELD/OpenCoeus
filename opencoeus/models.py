@@ -119,9 +119,9 @@ class TransactionBatch(Base):
     __tablename__ = "transaction_batches"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    scan_profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("scan_profiles.id"))
+    scan_profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("scan_profiles.id"), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(16), default="pending")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     undone_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -131,7 +131,7 @@ class TransactionEntry(Base):
     __tablename__ = "transaction_entries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    batch_id: Mapped[int] = mapped_column(Integer, ForeignKey("transaction_batches.id"))
+    batch_id: Mapped[int] = mapped_column(Integer, ForeignKey("transaction_batches.id"), index=True)
     action_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("proposed_actions.id"), nullable=True)
     action_type: Mapped[str] = mapped_column(String(32))
     source_path: Mapped[str] = mapped_column(Text)
@@ -139,7 +139,7 @@ class TransactionEntry(Base):
     source_hash: Mapped[str] = mapped_column(String(64), default="")
     destination_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_size: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(16), default="pending")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     holding_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
