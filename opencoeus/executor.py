@@ -119,6 +119,37 @@ def cleanup_holding_area(batch_id: int) -> None:
 
 
 # ------------------------------------------------------------------ #
+#  EMPTY FOLDER CLEANUP                                                #
+# ------------------------------------------------------------------ #
+
+
+def cleanup_empty_folders(root_path: Path, excluded_folders: set[str] | None = None) -> int:
+    # WALKS THE DIRECTORY TREE BOTTOM-UP AND REMOVES EMPTY FOLDERS.
+    # SKIPS EXCLUDED FOLDERS (node_modules, venv, .git, etc.) AND THE ROOT ITSELF.
+    # RETURNS THE NUMBER OF FOLDERS REMOVED.
+    excluded = excluded_folders or set()
+    removed = 0
+    # SORT BY DEPTH DESCENDING (BOTTOM-UP) SO CHILDREN ARE CHECKED BEFORE PARENTS.
+    all_dirs = sorted(root_path.rglob("*"), key=lambda p: len(p.parts), reverse=True)
+    for dir_path in all_dirs:
+        if not dir_path.is_dir():
+            continue
+        if dir_path == root_path:
+            continue
+        if dir_path.name == ".opencoeus":
+            continue
+        if any(dir_path.as_posix().startswith(Path(ex).as_posix()) for ex in excluded):
+            continue
+        try:
+            if not any(dir_path.iterdir()):
+                dir_path.rmdir()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+# ------------------------------------------------------------------ #
 #  PRE-FLIGHT CHECKS                                                    #
 # ------------------------------------------------------------------ #
 
@@ -229,8 +260,14 @@ def execute_batch(
             cleanup_holding_area(batch_id)
             return result
 
-    # CLEANUP: REMOVE HOLDING AREA.
+    # CLEANUP: REMOVE HOLDING AREA AND EMPTY FOLDERS.
     cleanup_holding_area(batch_id)
+    # DERIVE ROOT PATH FROM ENTRIES AND CLEANUP EMPTY FOLDERS LEFT BY MOVES.
+    if completed_entries:
+        source_dirs = {Path(e.source_path).parent for e, _ in completed_entries}
+        # USE THE DEEPEST COMMON ANCESTOR AS ROOT.
+        root_path = Path(os.path.commonpath([str(d) for d in source_dirs]))
+        cleanup_empty_folders(root_path)
     store.mark_batch(batch_id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
     return result
 
@@ -303,4 +340,9 @@ def undo_batch(
 
     store.mark_batch(batch_id, "undone", undone_at=datetime.now(UTC).replace(tzinfo=None))
     cleanup_holding_area(batch_id)
+    # CLEANUP EMPTY CATEGORY FOLDERS LEFT BY UNDO.
+    dest_dirs = {Path(e.destination_path).parent for e in entries if e.destination_path}
+    if dest_dirs:
+        undo_root = Path(os.path.commonpath([str(d) for d in dest_dirs]))
+        cleanup_empty_folders(undo_root)
     return errors

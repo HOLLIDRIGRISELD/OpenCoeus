@@ -5,6 +5,7 @@ from pathlib import Path
 from opencoeus.database import AuditStore
 from opencoeus.executor import (
     ExecutionResult,
+    cleanup_empty_folders,
     cleanup_holding_area,
     create_holding_area,
     get_holding_dir,
@@ -268,6 +269,69 @@ class RollbackTests(unittest.TestCase):
                 self.assertEqual(src2.read_text(), "second")
             finally:
                 executor_mod.HOLDING_ROOT = original
+
+
+class CleanupEmptyFoldersTests(unittest.TestCase):
+    def test_removes_empty_folders(self):
+        # VERIFIES THAT EMPTY FOLDERS ARE REMOVED AFTER CLEANUP.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "empty_dir").mkdir()
+            (root / "another_empty").mkdir()
+            removed = cleanup_empty_folders(root)
+            self.assertEqual(removed, 2)
+            self.assertFalse((root / "empty_dir").exists())
+            self.assertFalse((root / "another_empty").exists())
+
+    def test_skips_non_empty_folders(self):
+        # VERIFIES THAT FOLDERS WITH FILES ARE NOT REMOVED.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "has_files").mkdir()
+            (root / "has_files" / "file.txt").write_text("content")
+            removed = cleanup_empty_folders(root)
+            self.assertEqual(removed, 0)
+            self.assertTrue((root / "has_files").exists())
+
+    def test_skips_excluded_folders(self):
+        # VERIFIES THAT EXCLUDED FOLDERS ARE NOT REMOVED EVEN IF EMPTY.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "node_modules").mkdir()
+            (root / "empty_dir").mkdir()
+            removed = cleanup_empty_folders(root, excluded_folders={str(root / "node_modules")})
+            self.assertEqual(removed, 1)
+            self.assertTrue((root / "node_modules").exists())
+            self.assertFalse((root / "empty_dir").exists())
+
+    def test_skips_root_folder(self):
+        # VERIFIES THAT THE ROOT FOLDER ITSELF IS NEVER DELETED.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            removed = cleanup_empty_folders(root)
+            self.assertEqual(removed, 0)
+            self.assertTrue(root.exists())
+
+    def test_skips_opencoeus_folder(self):
+        # VERIFIES THAT .opencoeus FOLDER IS NOT REMOVED.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".opencoeus").mkdir()
+            removed = cleanup_empty_folders(root)
+            self.assertEqual(removed, 0)
+            self.assertTrue((root / ".opencoeus").exists())
+
+    def test_cleans_nested_empty_folders_bottom_up(self):
+        # VERIFIES THAT NESTED EMPTY FOLDERS ARE CLEANED BOTTOM-UP (CHILDREN BEFORE PARENTS).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            parent = root / "parent"
+            child = parent / "child"
+            child.mkdir(parents=True)
+            removed = cleanup_empty_folders(root)
+            self.assertEqual(removed, 2)
+            self.assertFalse(child.exists())
+            self.assertFalse(parent.exists())
 
 
 if __name__ == "__main__":

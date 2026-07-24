@@ -28,7 +28,7 @@ from .rules_engine import RulesEngine, RuleMatch
 
 DEFAULT_RULES = [
     {"id": 1, "name": "Documents", "rule_type": "extension", "enabled": True, "priority": 10,
-     "rule_config": '{"extensions": [".pdf", ".docx", ".doc", ".xlsx", ".pptx", ".txt", ".rtf", ".odt"]}',
+     "rule_config": '{"extensions": [".pdf", ".docx", ".doc", ".pptx", ".txt", ".rtf", ".odt", ".md"]}',
      "destination_template": "{root}/Documents/{filename}", "action_type": "move"},
     {"id": 2, "name": "Photos", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".tiff"]}',
@@ -39,9 +39,9 @@ DEFAULT_RULES = [
     {"id": 4, "name": "Video", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"]}',
      "destination_template": "{root}/Video/{filename}", "action_type": "move"},
-    {"id": 5, "name": "Archives", "rule_type": "extension", "enabled": True, "priority": 10,
+    {"id": 5, "name": "Compressed", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"]}',
-     "destination_template": "{root}/Archives/{filename}", "action_type": "move"},
+     "destination_template": "{root}/Compressed/{filename}", "action_type": "move"},
     {"id": 6, "name": "Code", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".cs", ".rb", ".go", ".rs", ".html", ".css", ".json", ".xml", ".yaml", ".yml", ".toml"]}',
      "destination_template": "{root}/Code/{filename}", "action_type": "move"},
@@ -57,6 +57,9 @@ DEFAULT_RULES = [
     {"id": 10, "name": "Uncategorized", "rule_type": "always", "enabled": True, "priority": 100,
      "rule_config": "{}",
      "destination_template": "{root}/Other/{filename}", "action_type": "move"},
+    {"id": 11, "name": "Spreadsheets", "rule_type": "extension", "enabled": True, "priority": 10,
+     "rule_config": '{"extensions": [".csv", ".xlsx", ".xls"]}',
+     "destination_template": "{root}/Spreadsheets/{filename}", "action_type": "move"},
 ]
 
 COLORS = {
