@@ -1315,10 +1315,15 @@ class MainWindow(QMainWindow):
     def _cleanup_workers(self) -> None:
         for worker in (self.phase_one_worker, self.phase_two_worker,
                        self.execution_worker, self.undo_worker):
-            if worker and worker.isRunning():
-                worker.blockSignals(True)
+            if worker is None:
+                continue
+            worker.blockSignals(True)
+            if worker.isRunning():
                 worker.quit()
-                worker.wait(3000)
+            worker.wait(5000)
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait(2000)
         self.phase_one_worker = None
         self.phase_two_worker = None
         self.execution_worker = None
@@ -1419,10 +1424,18 @@ class MainWindow(QMainWindow):
         self._status.showMessage("Preparing execution...")
         self.execute_btn.setEnabled(False)
         self.undo_btn.setEnabled(False)
-        from .journal import prepare_execution
-        batch_id, count = prepare_execution(
-            self.store, profile_id, f"{approved_count} file moves from UI"
-        )
+        try:
+            from .journal import prepare_execution
+            batch_id, count = prepare_execution(
+                self.store, profile_id, f"{approved_count} file moves from UI"
+            )
+        except Exception as exc:
+            self.progress_bar.hide()
+            self.execute_btn.setEnabled(True)
+            self.undo_btn.setEnabled(True)
+            self._on_log_message(f"Preparation failed: {exc}")
+            QMessageBox.critical(self, "Execution", f"Preparation failed:\n{exc}")
+            return
         if batch_id == 0:
             self.progress_bar.hide()
             self.execute_btn.setEnabled(True)
@@ -1433,13 +1446,7 @@ class MainWindow(QMainWindow):
         self.execution_worker = ExecutionWorker(batch_id, self.store)
         self.execution_worker.message.connect(self._on_log_message)
         self.execution_worker.finished_execution.connect(self._on_execution_done)
-        if not self.execution_worker.start():
-            # start() FAILED — RECOVER UI STATE IMMEDIATELY.
-            self.progress_bar.hide()
-            self.execute_btn.setEnabled(True)
-            self.undo_btn.setEnabled(True)
-            self.execution_worker = None
-            QMessageBox.critical(self, "Execution", "Failed to start execution thread.")
+        self.execution_worker.start()
 
     def _on_execution_done(self, result) -> None:
         # HANDLES COMPLETION OF AN EXECUTION BATCH.
@@ -1486,13 +1493,7 @@ class MainWindow(QMainWindow):
         self.undo_worker = UndoWorker(batch.id, self.store)
         self.undo_worker.message.connect(self._on_log_message)
         self.undo_worker.finished_undo.connect(self._on_undo_done)
-        if not self.undo_worker.start():
-            # start() FAILED — RECOVER UI STATE IMMEDIATELY.
-            self.progress_bar.hide()
-            self.execute_btn.setEnabled(True)
-            self.undo_btn.setEnabled(True)
-            self.undo_worker = None
-            QMessageBox.critical(self, "Undo", "Failed to start undo thread.")
+        self.undo_worker.start()
 
     def _on_undo_done(self, errors: list) -> None:
         # HANDLES COMPLETION OF AN UNDO WORKER.
