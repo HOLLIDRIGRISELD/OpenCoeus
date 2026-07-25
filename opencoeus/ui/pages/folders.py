@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
-    QHeaderView,
+    QHBoxLayout,
     QLabel,
-    QMessageBox,
-    QTreeWidget,
-    QTreeWidgetItem,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from ..theme import COLORS
+from ..theme import COLORS, accent_button_qss, text_button_qss
 from ...folder_tree import FolderNode, build_node_index, set_folder_exclusion
-from .common import make_container, section_title, section_sub
+from .common import CardTree, make_container, section_title, section_sub
+
+
+# COLUMN WIDTHS: [Arrow(30), CB(30), Name, Files, Size, Classification, Status].
+_FOLDER_COL_WIDTHS = [30, 30, 250, 80, 80, 100, 100]
 
 
 class FoldersPage(QWidget):
-    """FOLDER TREE PAGE WITH TRI-STATE CHECKBOXES."""
+    """FOLDER TREE PAGE WITH CARD-BASED TREE AND TRI-STATE CHECKBOXES."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,19 +33,45 @@ class FoldersPage(QWidget):
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(16)
 
-        root.addWidget(section_title("Folder Tree"))
+        # TITLE ROW
+        title_row = QHBoxLayout()
+        title_row.addWidget(section_title("Folder Tree"))
+        title_row.addStretch()
+        self.count_label = QLabel("0 folders")
+        self.count_label.setStyleSheet(
+            f"color: {COLORS.get('text2', '#7f848e')}; font-size: 12px;"
+        )
+        title_row.addWidget(self.count_label)
+        root.addLayout(title_row)
+
         root.addWidget(section_sub("Uncheck folders to exclude them from scanning."))
 
-        # TREE WIDGET
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Folder", "Files", "Size", "Type"])
-        self.tree.setAlternatingRowColors(True)
-        self.tree.setSortingEnabled(True)
-        self.tree.setColumnWidth(0, 320)
-        self.tree.setRootIsDecorated(True)
-        self.tree.itemChanged.connect(self._on_folder_toggled)
+        # TOOLBAR
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
 
-        root.addWidget(make_container(self.tree))
+        btn_expand = QPushButton("Expand All")
+        btn_expand.setToolTip("Expand all folders")
+        btn_expand.clicked.connect(self._expand_all)
+        btn_expand.setStyleSheet(accent_button_qss())
+        toolbar.addWidget(btn_expand)
+
+        btn_collapse = QPushButton("Collapse All")
+        btn_collapse.setToolTip("Collapse all folders")
+        btn_collapse.clicked.connect(self._collapse_all)
+        btn_collapse.setStyleSheet(text_button_qss())
+        toolbar.addWidget(btn_collapse)
+
+        toolbar.addStretch()
+        root.addLayout(toolbar)
+
+        # CARD TREE
+        self.card_tree = CardTree(
+            ["", "", "Folder", "Files", "Size", "Type", "Status"],
+            column_widths=_FOLDER_COL_WIDTHS,
+        )
+        self.card_tree.check_changed.connect(self._on_folder_toggled)
+        root.addWidget(make_container(self.card_tree))
 
     # ── MAIN WINDOW REFERENCE ──────────────────────────────────────────────
 
@@ -54,128 +82,89 @@ class FoldersPage(QWidget):
     # ── TREE POPULATION ────────────────────────────────────────────────────
 
     def fill_tree(self, root_node: FolderNode):
-        """POPULATE QTREEWIDGET FROM A FOLDERNODE TREE."""
-        self.tree.blockSignals(True)
-        self.tree.clear()
+        """POPULATE CARDTREE FROM A FOLDERNODE TREE."""
+        self.card_tree.clear()
         self._excluded.clear()
         self._node_index = build_node_index(root_node)
 
-        for child in root_node.children:
-            self._add_tree_children(self.tree.invisibleRootItem(), child)
-        self.tree.blockSignals(False)
+        # ADD ROOT NODE ITSELF.
+        self.card_tree.addNode(
+            name=root_node.name,
+            path=root_node.path.as_posix(),
+            depth=0,
+            file_count=root_node.file_count,
+            total_size=root_node.total_size,
+            classification=root_node.classification,
+            excluded=root_node.excluded,
+            has_children=len(root_node.children) > 0,
+        )
 
-    def _add_tree_children(self, parent_item: QTreeWidgetItem, node: FolderNode):
-        """RECURSIVELY ADD FOLDERNODES AS TREE ITEMS."""
-        item = QTreeWidgetItem(parent_item)
-        item.setText(0, node.name)
-        item.setText(1, str(node.file_count) if node.file_count else "")
-        item.setText(2, str(node.total_size) if node.total_size else "")
-        item.setText(3, node.classification or "")
-        item.setData(0, Qt.ItemDataRole.UserRole, node.path)
+        # ADD ALL DESCENDANTS IN PREORDER.
+        self._add_tree_children(root_node, depth=1)
 
-        # CLASSIFICATION COLOR
-        class_color = COLORS.get("text", "#ffffff")
-        if node.classification == "code":
-            class_color = "#61afef"
-        elif node.classification == "data":
-            class_color = "#e5c07b"
-        elif node.classification == "document":
-            class_color = "#98c379"
-        elif node.classification == "media":
-            class_color = "#c678dd"
-        elif node.classification == "archive":
-            class_color = "#e06c75"
-        item.setForeground(3, QColor(class_color))
+        # COMPUTE PARENT/CHILD RELATIONSHIPS AND VISIBILITY.
+        self.card_tree.finalizeHierarchy()
 
-        # TRI-STATE CHECKBOX
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        if node.excluded:
-            item.setCheckState(0, Qt.CheckState.Unchecked)
-            self._excluded.add(node.path)
-        else:
-            item.setCheckState(0, Qt.CheckState.Checked)
+        # UPDATE COUNT.
+        total = self.card_tree.rowCount()
+        self.count_label.setText(f"{total} folders")
 
-        # RECURSE CHILDREN
+    def _add_tree_children(self, node: FolderNode, depth: int):
+        """RECURSIVELY ADD CHILD NODES TO THE CARDTREE."""
         for child in node.children:
-            self._add_tree_children(item, child)
+            self._excluded.add(child.path.as_posix()) if child.excluded else None
+
+            self.card_tree.addNode(
+                name=child.name,
+                path=child.path.as_posix(),
+                depth=depth,
+                file_count=child.file_count,
+                total_size=child.total_size,
+                classification=child.classification,
+                excluded=child.excluded,
+                has_children=len(child.children) > 0,
+            )
+
+            # RECURSE.
+            self._add_tree_children(child, depth + 1)
+
+    # ── EXPAND / COLLAPSE ─────────────────────────────────────────────────
+
+    def _expand_all(self):
+        """EXPAND ALL FOLDERS."""
+        self.card_tree.expandAll()
+
+    def _collapse_all(self):
+        """COLLAPSE ALL FOLDERS."""
+        self.card_tree.collapseAll()
 
     # ── CHECKBOX HANDLING ──────────────────────────────────────────────────
 
-    def _on_folder_toggled(self, item: QTreeWidgetItem, col: int):
-        """HANDLE CHECKBOX TOGGLING WITH PARENT/CHILD PROPAGATION."""
-        if col != 0:
+    def _on_folder_toggled(self, row_index: int, checked: bool):
+        """HANDLE CHECKBOX TOGGLING WITH PERSISTENCE TO DATABASE."""
+        path = self.card_tree.getNodePath(row_index)
+        if not path:
             return
 
-        self.tree.blockSignals(True)
-        state = item.checkState(0)
-
-        # PROPAGATE TO CHILDREN
-        self._set_children_check_state(item, state)
-
-        # PROPAGATE TO PARENT
-        self._update_parent_check_state(item)
-
-        # UPDATE EXCLUDED SET
-        path = item.data(0, Qt.ItemDataRole.UserRole)
-        if path:
-            if state == Qt.CheckState.Unchecked:
-                self._excluded.add(path)
-            else:
-                self._excluded.discard(path)
-
-            # PERSIST TO DATABASE
-            if self._main is not None and hasattr(self._main, "store") and self._main.store is not None:
-                node = self._node_index.get(path)
-                if node is not None:
-                    excluded = state == Qt.CheckState.Unchecked
-                    set_folder_exclusion(self._main.store, path, excluded)
-
-        self.tree.blockSignals(False)
-
-    def _set_children_check_state(self, parent: QTreeWidgetItem, state: Qt.CheckState):
-        """RECURSIVELY SET CHILDREN CHECK STATE."""
-        for i in range(parent.childCount()):
-            child = parent.child(i)
-            child.setCheckState(0, state)
-            path = child.data(0, Qt.ItemDataRole.UserRole)
-            if path:
-                if state == Qt.CheckState.Unchecked:
-                    self._excluded.add(path)
-                else:
-                    self._excluded.discard(path)
-            self._set_children_check_state(child, state)
-
-    def _update_parent_check_state(self, item: QTreeWidgetItem):
-        """RECURSIVELY UPDATE PARENT TRI-STATE CHECKBOX."""
-        parent = item.parent()
-        if parent is None:
-            return
-
-        checked = 0
-        unchecked = 0
-        for i in range(parent.childCount()):
-            child = parent.child(i)
-            cs = child.checkState(0)
-            if cs == Qt.CheckState.Checked:
-                checked += 1
-            elif cs == Qt.CheckState.Unchecked:
-                unchecked += 1
-
-        if unchecked == parent.childCount():
-            parent.setCheckState(0, Qt.CheckState.Unchecked)
-        elif checked == parent.childCount():
-            parent.setCheckState(0, Qt.CheckState.Checked)
+        # UPDATE EXCLUDED SET.
+        if not checked:
+            self._excluded.add(path)
         else:
-            parent.setCheckState(0, Qt.CheckState.PartiallyChecked)
+            self._excluded.discard(path)
 
-        path = parent.data(0, Qt.ItemDataRole.UserRole)
-        if path:
-            if parent.checkState(0) == Qt.CheckState.Unchecked:
-                self._excluded.add(path)
-            else:
-                self._excluded.discard(path)
+        # PERSIST TO DATABASE.
+        if self._main is not None and hasattr(self._main, "store") and self._main.store is not None:
+            node = self._node_index.get(path)
+            if node is not None:
+                excluded = not checked
+                if self._main.folder_tree_root is not None:
+                    set_folder_exclusion(
+                        self._main.folder_tree_root, Path(path), excluded,
+                        node_index=self._node_index,
+                    )
 
-        self._update_parent_check_state(parent)
+        # REBUILD EXCLUDED SET FROM ALL CHECKBOXES (PROPAGATION AFFECTS CHILDREN).
+        self._excluded = self.card_tree.getExcludedPaths()
 
     # ── PUBLIC ACCESSORS ───────────────────────────────────────────────────
 

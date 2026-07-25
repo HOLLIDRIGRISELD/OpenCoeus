@@ -11,7 +11,7 @@ from .config import ScanSettings
 from .database import AuditStore
 from .documents import extract_text, suggest_title
 from .folder_classifier import classify_tree
-from .folder_tree import FolderNode, build_folder_tree, flatten_tree
+from .folder_tree import build_folder_tree, flatten_tree
 from .hashing import sha256_file
 from .safety import is_protected
 from .scanner import FileRecord, iter_files
@@ -109,11 +109,14 @@ class ScanEngine:
         for file_number, file_record in enumerate(discovered_files, 1):
             if progress_callback and (file_number % 50 == 0 or file_number == total_files):
                 progress_callback(f"{file_number}/{total_files}  {file_record.path}")
-            relative_file_path = file_record.path.relative_to(self.settings.root)
+            try:
+                relative_file_path = file_record.path.relative_to(self.settings.root)
+            except ValueError:
+                relative_file_path = file_record.path
             is_protected_file = is_protected(relative_file_path, self.settings.protected_patterns)
             file_hash = ""
             file_status, original_file_path = ("protected", "") if is_protected_file else ("unique", "")
-            if not is_protected_file and len(files_grouped_by_size[file_record.size]) > 1:
+            if not is_protected_file and file_record.size > 0 and len(files_grouped_by_size[file_record.size]) > 1:
                 try:
                     file_hash = sha256_file(file_record.path, self.settings.chunk_size)
                     if file_hash in first_file_by_hash:
@@ -148,15 +151,19 @@ class ScanEngine:
 
     def _is_in_excluded_folder(self, file_record: FileRecord, excluded_folders: set[str]) -> bool:
         # CHECKS WHETHER A FILE'S FOLDER PATH MATCHES ANY EXCLUDED FOLDER.
+        normalized = file_record.folder_path.replace("\\", "/")
         for excluded_folder in excluded_folders:
-            if file_record.folder_path.startswith(excluded_folder):
+            excluded_normalized = excluded_folder.replace("\\", "/").rstrip("/") 
+            if normalized == excluded_normalized or normalized.startswith(excluded_normalized + "/"):
                 return True
         return False
 
     def _is_in_included_folder(self, file_record: FileRecord, included_folders: list[str]) -> bool:
         # CHECKS WHETHER A FILE'S FOLDER PATH MATCHES ANY INCLUDED FOLDER.
+        normalized = file_record.folder_path.replace("\\", "/")
         for included_folder in included_folders:
-            if file_record.folder_path.startswith(included_folder):
+            included_normalized = included_folder.replace("\\", "/").rstrip("/") 
+            if normalized == included_normalized or normalized.startswith(included_normalized + "/"):
                 return True
         return False
 

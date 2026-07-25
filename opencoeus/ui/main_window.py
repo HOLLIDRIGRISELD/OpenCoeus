@@ -22,7 +22,7 @@ from ..profiles import (
     load_profile_by_name, update_profile,
 )
 from ..rules_engine import DEFAULT_RULES, RulesEngine, RuleMatch
-from .theme import COLORS, global_stylesheet
+from .theme import COLORS, global_stylesheet, accent_button_qss, success_button_qss, text_button_qss
 from .widgets import SidebarButton, StatCard
 from .pages import HomePage, FoldersPage, ResultsPage, ActionsPage, RulesPage, LogPage
 from .dialogs import AboutDialog, BatchDetailDialog, ProfileEditDialog, RuleEditDialog
@@ -209,20 +209,14 @@ class MainWindow(QMainWindow):
         browse_btn = QPushButton("Browse")
         browse_btn.setFixedWidth(80)
         browse_btn.setToolTip("Browse for a folder (Ctrl+O)")
+        browse_btn.setStyleSheet(accent_button_qss())
         browse_btn.clicked.connect(self._choose_folder)
         hlay.addWidget(browse_btn)
 
         self.phase_one_button = QPushButton("Discover")
         self.phase_one_button.setFixedWidth(100)
         self.phase_one_button.setToolTip("Discover and classify folders (F5)")
-        self.phase_one_button.setStyleSheet(f"""
-            QPushButton {{
-                background: {COLORS["accent2"]}; color: #ffffff;
-                border: 1px solid {COLORS["accent"]}; font-weight: bold;
-            }}
-            QPushButton:hover {{ background: {COLORS["accent"]}; }}
-            QPushButton:disabled {{ background: {COLORS["surface3"]}; color: {COLORS["text3"]}; border-color: {COLORS["surface3"]}; }}
-        """)
+        self.phase_one_button.setStyleSheet(accent_button_qss())
         self.phase_one_button.clicked.connect(self._start_phase_one)
         hlay.addWidget(self.phase_one_button)
 
@@ -230,14 +224,7 @@ class MainWindow(QMainWindow):
         self.phase_two_button.setFixedWidth(130)
         self.phase_two_button.setEnabled(False)
         self.phase_two_button.setToolTip("Scan files and apply rules (F6)")
-        self.phase_two_button.setStyleSheet(f"""
-            QPushButton {{
-                background: {COLORS["green"]}; color: #000000;
-                border: 1px solid {COLORS["green"]}; font-weight: bold;
-            }}
-            QPushButton:hover {{ background: #47cc5a; }}
-            QPushButton:disabled {{ background: {COLORS["surface3"]}; color: {COLORS["text3"]}; border-color: {COLORS["surface3"]}; }}
-        """)
+        self.phase_two_button.setStyleSheet(success_button_qss())
         self.phase_two_button.clicked.connect(self._start_phase_two)
         hlay.addWidget(self.phase_two_button)
 
@@ -245,6 +232,7 @@ class MainWindow(QMainWindow):
         self.export_button.setFixedWidth(80)
         self.export_button.setEnabled(False)
         self.export_button.setToolTip("Export scan manifest to CSV (Ctrl+E)")
+        self.export_button.setStyleSheet(text_button_qss())
         self.export_button.clicked.connect(self._export_manifest)
         hlay.addWidget(self.export_button)
 
@@ -438,7 +426,9 @@ class MainWindow(QMainWindow):
 
         # PERSIST PROPOSED ACTIONS TO DATABASE.
         if self.current_profile is None or self.current_profile.profile_id is None:
-            self.current_profile = create_profile("default")
+            self.current_profile = load_profile_by_name(self.store, "default")
+        if self.current_profile is None:
+            self.current_profile = create_profile(self.store, "default")
         profile_id = self.current_profile.profile_id
         actions_data = [
             {"original_path": m.original_path, "proposed_path": m.proposed_path,
@@ -488,7 +478,9 @@ class MainWindow(QMainWindow):
         if self.execution_worker and self.execution_worker.isRunning():
             return
         if self.current_profile is None or self.current_profile.profile_id is None:
-            self.current_profile = create_profile("default")
+            self.current_profile = load_profile_by_name(self.store, "default")
+        if self.current_profile is None:
+            self.current_profile = create_profile(self.store, "default")
         profile_id = self.current_profile.profile_id
         approved_count = sum(
             1 for r in range(self.actions_page.actions_table.rowCount())

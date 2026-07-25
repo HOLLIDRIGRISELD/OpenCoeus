@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import COLORS
+from ..theme import COLORS, accent_button_qss, text_button_qss, danger_button_qss
 from ..widgets import StatCard
 from ...profiles import (
     ProfileConfig,
@@ -63,16 +63,19 @@ class HomePage(QWidget):
 
         btn_new = QPushButton("+ New")
         btn_new.setToolTip("Create a new scan profile")
+        btn_new.setStyleSheet(accent_button_qss())
         btn_new.clicked.connect(self._create_new_profile)
         profile_header.addWidget(btn_new)
 
         btn_edit = QPushButton("Edit")
         btn_edit.setToolTip("Edit the selected profile")
+        btn_edit.setStyleSheet(text_button_qss())
         btn_edit.clicked.connect(self._edit_selected_profile)
         profile_header.addWidget(btn_edit)
 
         btn_delete = QPushButton("Delete")
         btn_delete.setToolTip("Delete the selected profile")
+        btn_delete.setStyleSheet(danger_button_qss())
         btn_delete.clicked.connect(self._delete_selected_profile)
         profile_header.addWidget(btn_delete)
 
@@ -114,16 +117,13 @@ class HomePage(QWidget):
         name = current.text()
         if name == "No profiles yet":
             return
-        self._main.current_profile = name
+        self._main.current_profile = load_profile_by_name(self._main.store, name)
 
     def _create_new_profile(self):
         """OPEN PROFILEEDITDIALOG FOR A NEW PROFILE."""
-        dialog = ProfileEditDialog(self)
-        if dialog.exec():
-            cfg = dialog.get_profile()
-            if self._main is not None and self._main.store is not None:
-                create_profile(self._main.store, cfg)
-                self.load_profiles(self._main.store)
+        dialog = ProfileEditDialog(self._main.store, profile=None, parent=self)
+        dialog.saved.connect(lambda: self.load_profiles(self._main.store))
+        dialog.exec()
 
     def _edit_selected_profile(self):
         """OPEN PROFILEEDITDIALOG WITH THE CURRENT PROFILE."""
@@ -136,11 +136,9 @@ class HomePage(QWidget):
         profile = load_profile_by_name(self._main.store, name)
         if profile is None:
             return
-        dialog = ProfileEditDialog(self, profile=profile)
-        if dialog.exec():
-            cfg = dialog.get_profile()
-            update_profile(self._main.store, cfg)
-            self.load_profiles(self._main.store)
+        dialog = ProfileEditDialog(self._main.store, profile=profile, parent=self)
+        dialog.saved.connect(lambda: self.load_profiles(self._main.store))
+        dialog.exec()
 
     def _delete_selected_profile(self):
         """CONFIRM THEN DELETE THE SELECTED PROFILE."""
@@ -156,8 +154,10 @@ class HomePage(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             if self._main is not None and self._main.store is not None:
-                delete_profile(self._main.store, name)
-                self.load_profiles(self._main.store)
+                profile = load_profile_by_name(self._main.store, name)
+                if profile is not None:
+                    delete_profile(self._main.store, profile.profile_id)
+                    self.load_profiles(self._main.store)
 
     # ── STATS ──────────────────────────────────────────────────────────────
 

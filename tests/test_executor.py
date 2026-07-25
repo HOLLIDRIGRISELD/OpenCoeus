@@ -435,7 +435,7 @@ class ExecuteBatchTests(unittest.TestCase):
                 self.assertEqual(result.failed, 1)
                 self.assertEqual(result.completed, 0)
                 entries = store.get_entries_by_batch(batch.id)
-                self.assertEqual(entries[0].status, "failed")
+                self.assertEqual(entries[0].status, "FAILED")
             finally:
                 executor_mod.HOLDING_ROOT = original
 
@@ -474,7 +474,7 @@ class ExecuteBatchTests(unittest.TestCase):
                 profile = store.create_profile("No Pending")
                 batch = store.create_batch(profile.id)
                 entry = store.add_entry(batch.id, None, "move", "/a.txt", "/b.txt")
-                store.update_entry(entry.id, status="completed")
+                store.update_entry(entry.id, status="COMPLETED")
                 result = execute_batch(batch.id, store)
                 self.assertEqual(result.skipped, 1)
                 self.assertEqual(result.completed, 0)
@@ -522,9 +522,9 @@ class UndoBatchTests(unittest.TestCase):
                 batch = store.create_batch(profile.id)
                 entry = store.add_entry(batch.id, None, "move", str(src), str(dest))
                 # SIMULATE COMPLETED STATE.
-                store.update_entry(entry.id, status="completed", destination_path=str(dest),
+                store.update_entry(entry.id, status="COMPLETED", destination_path=str(dest),
                                    executed_at=datetime.now(UTC).replace(tzinfo=None))
-                store.mark_batch(batch.id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
+                store.mark_batch(batch.id, "COMPLETED", completed_at=datetime.now(UTC).replace(tzinfo=None))
                 dest.write_text("content")
                 errors = undo_batch(batch.id, store)
                 self.assertEqual(len(errors), 0)
@@ -548,9 +548,9 @@ class UndoBatchTests(unittest.TestCase):
                 dest = Path(tmp) / "deleted.txt"
                 batch = store.create_batch(profile.id)
                 entry = store.add_entry(batch.id, None, "move", str(src), str(dest))
-                store.update_entry(entry.id, status="completed", destination_path=str(dest),
+                store.update_entry(entry.id, status="COMPLETED", destination_path=str(dest),
                                    executed_at=datetime.now(UTC).replace(tzinfo=None))
-                store.mark_batch(batch.id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
+                store.mark_batch(batch.id, "COMPLETED", completed_at=datetime.now(UTC).replace(tzinfo=None))
                 errors = undo_batch(batch.id, store)
                 self.assertEqual(len(errors), 1)
                 self.assertIn("missing", errors[0])
@@ -589,8 +589,8 @@ class RecoverCrashedBatchesTests(unittest.TestCase):
         batch = store.create_batch(profile.id)
         entry = store.add_entry(batch.id, None, "move", "/a.txt", "/b.txt")
         # SET BATCH TO EXECUTING AND ENTRY TO MOVED_TO_HOLDING.
-        store.mark_batch(batch.id, "executing")
-        store.update_entry(entry.id, status="moved_to_holding", holding_path="/holding/b.txt")
+        store.mark_batch(batch.id, "EXECUTING")
+        store.update_entry(entry.id, status="MOVED_TO_HOLDING", holding_path="/holding/b.txt")
         recovered = recover_crashed_batches(store)
         self.assertEqual(recovered, 1)
         # VERIFY STATUS WAS UPDATED.
@@ -598,16 +598,16 @@ class RecoverCrashedBatchesTests(unittest.TestCase):
         from sqlalchemy import select
         with store.session_factory() as session:
             batch_obj = session.scalar(select(TransactionBatch).where(TransactionBatch.id == batch.id))
-            self.assertEqual(batch_obj.status, "failed")
+            self.assertEqual(batch_obj.status, "FAILED")
             entry_obj = session.scalar(select(TransactionEntry).where(TransactionEntry.id == entry.id))
-            self.assertEqual(entry_obj.status, "failed")
+            self.assertEqual(entry_obj.status, "FAILED")
 
     def test_recover_nothing_to_recover(self):
         # VERIFIES NO RECOVERY NEEDED WHEN NO EXECUTING BATCHES EXIST.
         store = self._make_store()
         profile = store.create_profile("No Crash")
         batch = store.create_batch(profile.id)
-        store.mark_batch(batch.id, "completed")
+        store.mark_batch(batch.id, "COMPLETED")
         recovered = recover_crashed_batches(store)
         self.assertEqual(recovered, 0)
 
@@ -616,20 +616,20 @@ class BatchStatusEnumTests(unittest.TestCase):
     def test_batch_status_values(self):
         # VERIFIES BATCHSTATUS ENUM HAS CORRECT STRING VALUES.
         from opencoeus.models import BatchStatus
-        self.assertEqual(BatchStatus.PENDING, "pending")
-        self.assertEqual(BatchStatus.EXECUTING, "executing")
-        self.assertEqual(BatchStatus.COMPLETED, "completed")
-        self.assertEqual(BatchStatus.FAILED, "failed")
-        self.assertEqual(BatchStatus.UNDONE, "undone")
+        self.assertEqual(BatchStatus.PENDING, "PENDING")
+        self.assertEqual(BatchStatus.EXECUTING, "EXECUTING")
+        self.assertEqual(BatchStatus.COMPLETED, "COMPLETED")
+        self.assertEqual(BatchStatus.FAILED, "FAILED")
+        self.assertEqual(BatchStatus.UNDONE, "UNDONE")
 
     def test_entry_status_values(self):
         # VERIFIES ENTRYSTATUS ENUM HAS CORRECT STRING VALUES.
         from opencoeus.models import EntryStatus
-        self.assertEqual(EntryStatus.PENDING, "pending")
-        self.assertEqual(EntryStatus.MOVED_TO_HOLDING, "moved_to_holding")
-        self.assertEqual(EntryStatus.COMPLETED, "completed")
-        self.assertEqual(EntryStatus.FAILED, "failed")
-        self.assertEqual(EntryStatus.UNDONE, "undone")
+        self.assertEqual(EntryStatus.PENDING, "PENDING")
+        self.assertEqual(EntryStatus.MOVED_TO_HOLDING, "MOVED_TO_HOLDING")
+        self.assertEqual(EntryStatus.COMPLETED, "COMPLETED")
+        self.assertEqual(EntryStatus.FAILED, "FAILED")
+        self.assertEqual(EntryStatus.UNDONE, "UNDONE")
 
 
 class EndToEndExecuteUndoRoundTripTests(unittest.TestCase):
@@ -705,9 +705,9 @@ class EndToEndExecuteUndoRoundTripTests(unittest.TestCase):
                 dest = Path(tmp) / "moved.txt"
                 batch = store.create_batch(profile.id)
                 entry = store.add_entry(batch.id, None, "move", str(src), str(dest))
-                store.update_entry(entry.id, status="completed", destination_path=str(dest),
+                store.update_entry(entry.id, status="COMPLETED", destination_path=str(dest),
                                    executed_at=datetime.now(UTC).replace(tzinfo=None))
-                store.mark_batch(batch.id, "completed", completed_at=datetime.now(UTC).replace(tzinfo=None))
+                store.mark_batch(batch.id, "COMPLETED", completed_at=datetime.now(UTC).replace(tzinfo=None))
                 # DESTINATION DOES NOT EXIST (SIMULATING EXTERNAL DELETION).
                 errors = undo_batch(batch.id, store)
                 self.assertEqual(len(errors), 1)
@@ -777,7 +777,7 @@ class PartialRollbackMidBatchTests(unittest.TestCase):
                 # FAIL.TXT ENTRY SHOULD BE FAILED IN DB.
                 entries = store.get_entries_by_batch(batch.id)
                 fail_entry = [e for e in entries if "fail" in e.source_path][0]
-                self.assertEqual(fail_entry.status, "failed")
+                self.assertEqual(fail_entry.status, "FAILED")
             finally:
                 executor_mod.HOLDING_ROOT = original
 
@@ -805,7 +805,7 @@ class PartialRollbackMidBatchTests(unittest.TestCase):
                 self.assertEqual(result.completed, 0)
                 # ENTRY SHOULD BE FAILED IN DB.
                 entries = store.get_entries_by_batch(batch.id)
-                self.assertEqual(entries[0].status, "failed")
+                self.assertEqual(entries[0].status, "FAILED")
             finally:
                 executor_mod.HOLDING_ROOT = original
 
@@ -846,7 +846,7 @@ class PreFlightHashMismatchDBTests(unittest.TestCase):
                 self.assertEqual(result.total, 1)
                 # VERIFY DB STATE: ENTRY FAILED WITH HASH MISMATCH MESSAGE.
                 entries = store.get_entries_by_batch(batch.id)
-                self.assertEqual(entries[0].status, "failed")
+                self.assertEqual(entries[0].status, "FAILED")
                 self.assertIn("Hash mismatch", entries[0].error_message or "")
                 # SOURCE FILE SHOULD STILL EXIST (NEVER MOVED).
                 self.assertTrue(src.exists())
@@ -874,7 +874,7 @@ class PreFlightHashMismatchDBTests(unittest.TestCase):
                 result = execute_batch(batch.id, store)
                 self.assertEqual(result.failed, 1)
                 entries = store.get_entries_by_batch(batch.id)
-                self.assertEqual(entries[0].status, "failed")
+                self.assertEqual(entries[0].status, "FAILED")
                 self.assertIn("Size mismatch", entries[0].error_message or "")
             finally:
                 executor_mod.HOLDING_ROOT = original
@@ -973,8 +973,8 @@ class FullDBStateVerificationTests(unittest.TestCase):
                 # VERIFY EACH ENTRY'S STATUS.
                 entries = store.get_entries_by_batch(batch.id)
                 statuses = {Path(e.source_path).name: e.status for e in entries}
-                self.assertEqual(statuses["good.txt"], "completed")
-                self.assertEqual(statuses["missing.txt"], "failed")
+                self.assertEqual(statuses["good.txt"], "COMPLETED")
+                self.assertEqual(statuses["missing.txt"], "FAILED")
             finally:
                 executor_mod.HOLDING_ROOT = original
 

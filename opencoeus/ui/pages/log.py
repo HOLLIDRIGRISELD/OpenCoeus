@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import COLORS
+from ..theme import COLORS, text_button_qss
 from .common import section_title, section_sub
 
 MAX_LOG_LINES = 5000
@@ -34,6 +34,7 @@ class LogPage(QWidget):
 
         btn_clear = QPushButton("Clear")
         btn_clear.setToolTip("Clear the log")
+        btn_clear.setStyleSheet(text_button_qss())
         btn_clear.clicked.connect(self.clear_log)
         header_row.addWidget(btn_clear)
 
@@ -64,17 +65,19 @@ class LogPage(QWidget):
         self.log_text.append(msg)
 
         # TRIM TO MAX LINES
-        cursor = self.log_text.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        cursor.movePosition(
-            QTextCursor.MoveOperation.Down,
-            QTextCursor.MoveMode.MoveAnchor,
-            self.log_text.document().blockCount() - MAX_LOG_LINES,
-        )
-        cursor.select(QTextCursor.SelectionType.Document)
-        cursor.removeSelectedText()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        self.log_text.setTextCursor(cursor)
+        block_count = self.log_text.document().blockCount()
+        if block_count > MAX_LOG_LINES:
+            cursor = self.log_text.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.movePosition(
+                QTextCursor.MoveOperation.Down,
+                QTextCursor.MoveMode.MoveAnchor,
+                block_count - MAX_LOG_LINES,
+            )
+            cursor.select(QTextCursor.SelectionType.Document)
+            cursor.removeSelectedText()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.log_text.setTextCursor(cursor)
 
         # SCROLL TO BOTTOM
         scrollbar = self.log_text.verticalScrollBar()

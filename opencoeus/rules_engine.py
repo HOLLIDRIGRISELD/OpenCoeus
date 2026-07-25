@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -77,7 +78,10 @@ class RulesEngine:
         for rule in rules:
             prepared = dict(rule)
             if isinstance(prepared.get("rule_config"), str):
-                prepared["_parsed_config"] = json.loads(prepared["rule_config"])
+                try:
+                    prepared["_parsed_config"] = json.loads(prepared["rule_config"])
+                except (json.JSONDecodeError, TypeError):
+                    prepared["_parsed_config"] = {}
             else:
                 prepared["_parsed_config"] = prepared.get("rule_config", {})
             # PRE-COMPILE REGEX PATTERNS AND EXTENSION SETS FOR PERFORMANCE.
@@ -102,9 +106,15 @@ class RulesEngine:
         for row in manifest_rows:
             if row.status in {"unreadable", "protected"}:
                 continue
-            if profile_excluded and any(row.folder_path.startswith(ex) for ex in profile_excluded):
+            if profile_excluded and any(
+                row.folder_path == ex or row.folder_path.startswith(ex + os.sep)
+                for ex in profile_excluded
+            ):
                 continue
-            if profile_included and not any(row.folder_path.startswith(inc) for inc in profile_included):
+            if profile_included and not any(
+                row.folder_path == inc or row.folder_path.startswith(inc + os.sep)
+                for inc in profile_included
+            ):
                 continue
             for rule in sorted_rules:
                 if not rule.get("enabled", True):
@@ -235,7 +245,7 @@ class RulesEngine:
             try:
                 resolved = Path(result).resolve()
                 scan_root_resolved = Path(self.scan_root).resolve()
-                if not str(resolved).startswith(str(scan_root_resolved)):
+                if not resolved.is_relative_to(scan_root_resolved):
                     return row.path
             except (ValueError, OSError):
                 return row.path

@@ -52,22 +52,21 @@ def _populate_and_compute(
         return
     if _folder_counter is None:
         _folder_counter = [0]
-    # COMPUTE DIRECT FILE COUNT AND SIZE FOR THIS NODE.
-    try:
-        for entry in parent_node.path.iterdir():
-            if entry.is_file() and not entry.is_symlink():
-                parent_node.file_count += 1
-                try:
-                    parent_node.total_size += entry.stat(follow_symlinks=False).st_size
-                except OSError:
-                    pass
-    except PermissionError:
-        pass
-    # POPULATE CHILDREN.
+    # DISCOVER ALL ENTRIES IN A SINGLE PASS: COUNT FILES, COLLECT SUBDIRECTORIES.
     try:
         sorted_entries = sorted(parent_node.path.iterdir(), key=lambda entry: entry.name.lower())
     except PermissionError:
         return
+    for entry in sorted_entries:
+        if entry.is_symlink():
+            continue
+        if entry.is_file():
+            parent_node.file_count += 1
+            try:
+                parent_node.total_size += entry.stat(follow_symlinks=False).st_size
+            except OSError:
+                pass
+    # POPULATE CHILDREN.
     for entry in sorted_entries:
         if not entry.is_dir():
             continue

@@ -2,9 +2,10 @@ from __future__ import annotations
 from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
 from ...config import ScanSettings
+from ...database import AuditStore
 from ...engine import ScanEngine
 from ...folder_tree import build_folder_tree
-from ...profiles import ProfileConfig
+from ...profiles import ProfileConfig, create_profile, load_profile_by_name
 
 
 class PhaseOneWorker(QThread):
@@ -22,10 +23,22 @@ class PhaseOneWorker(QThread):
             merged_patterns = list(self.profile.custom_protected_patterns) if self.profile else []
             settings = ScanSettings(self.selected_folder)
             engine = ScanEngine(settings)
+            profile_id = self.profile.profile_id if self.profile and self.profile.profile_id else None
+            if profile_id is None:
+                store = AuditStore()
+                try:
+                    existing = load_profile_by_name(store, "default")
+                    if existing is not None:
+                        profile_id = existing.profile_id
+                    else:
+                        default_profile = create_profile(store, "default")
+                        profile_id = default_profile.profile_id
+                finally:
+                    store.close()
             result = engine.run_phase_one(
                 lambda msg: self.message.emit(str(msg)),
                 custom_patterns=merged_patterns or None,
-                profile_id=self.profile.profile_id if self.profile and self.profile.profile_id else 1,
+                profile_id=profile_id,
             )
             tree_root = build_folder_tree(self.selected_folder, settings.protected_patterns, max_depth=5)
             self.finished_tree.emit(result, tree_root)

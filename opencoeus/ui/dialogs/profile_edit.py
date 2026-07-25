@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 
 from ...database import AuditStore
 from ...profiles import ProfileConfig, create_profile, update_profile
-from ..theme import COLORS, dialog_stylesheet
+from ..theme import COLORS, dialog_stylesheet, accent_button_qss, text_button_qss
 
 
 class ProfileEditDialog(QDialog):
@@ -90,14 +90,12 @@ class ProfileEditDialog(QDialog):
         btn_row.addStretch()
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setFixedWidth(90)
+        cancel_btn.setStyleSheet(text_button_qss())
         cancel_btn.clicked.connect(self.close)
         btn_row.addWidget(cancel_btn)
         save_btn = QPushButton("Save")
         save_btn.setFixedWidth(90)
-        save_btn.setStyleSheet(f"""
-            QPushButton {{ background: {COLORS["accent2"]}; color: #fff; border: 1px solid {COLORS["accent"]}; font-weight: bold; }}
-            QPushButton:hover {{ background: {COLORS["accent"]}; }}
-        """)
+        save_btn.setStyleSheet(accent_button_qss())
         save_btn.clicked.connect(self._save)
         btn_row.addWidget(save_btn)
         lay.addLayout(btn_row)

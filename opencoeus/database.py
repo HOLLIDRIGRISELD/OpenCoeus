@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy import create_engine, delete, event, inspect, select, text, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -104,14 +104,21 @@ class AuditStore:
     def record_files_batch(self, records: list[tuple]) -> None:
         # BULK INSERTS OR UPDATES MULTIPLE FILE RECORDS IN A SINGLE SESSION FOR PERFORMANCE.
         logger.debug("Recording %d files to database", len(records))
+        if not records:
+            return
+        all_paths = [r[0] for r in records]
         with self.session_factory() as session:
+            existing_rows = session.scalars(
+                select(FileAudit).where(FileAudit.path.in_(all_paths))
+            ).all()
+            existing_map = {row.path: row for row in existing_rows}
             for record in records:
                 file_path, file_size, file_hash, file_status = record[0], record[1], record[2], record[3]
                 relative_path = record[4] if len(record) > 4 else ""
                 extension = record[5] if len(record) > 5 else ""
                 modified_at = record[6] if len(record) > 6 else None
                 folder_path = record[7] if len(record) > 7 else ""
-                audit_record = session.scalar(select(FileAudit).where(FileAudit.path == file_path))
+                audit_record = existing_map.get(file_path)
                 if audit_record is None:
                     audit_record = FileAudit(
                         path=file_path, size=file_size, sha256=file_hash, status=file_status,
@@ -371,18 +378,35 @@ class AuditStore:
     def save_proposed_actions(self, profile_id: int, actions: list[dict]) -> None:
         # SAVES A LIST OF PROPOSED ACTIONS, CLEARING PREVIOUS ONES FOR THE PROFILE.
         with self.session_factory() as session:
-            existing = session.scalars(
-                select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
-            ).all()
-            for item in existing:
-                session.delete(item)
+            # GET EXISTING ACTION IDS FOR THIS PROFILE.
+            existing_ids = list(session.scalars(
+                select(ProposedAction.id).where(ProposedAction.scan_profile_id == profile_id)
+            ).all())
+            if existing_ids:
+                # NULL OUT FK REFERENCES FROM TRANSACTION_ENTRIES BEFORE DELETING.
+                session.execute(
+                    update(TransactionEntry)
+                    .where(TransactionEntry.action_id.in_(existing_ids))
+                    .values(action_id=None)
+                )
+                session.execute(
+                    delete(ProposedAction).where(ProposedAction.id.in_(existing_ids))
+                )
+            # VALIDATE RULE IDS EXIST IN THE DATABASE BEFORE INSERTING.
+            rule_ids = {a.get("rule_id") for a in actions if a.get("rule_id") is not None}
+            valid_rule_ids = set()
+            if rule_ids:
+                valid_rule_ids = set(session.scalars(
+                    select(OrganizationRule.id).where(OrganizationRule.id.in_(rule_ids))
+                ).all())
             for action_data in actions:
+                raw_rule_id = action_data.get("rule_id")
                 session.add(ProposedAction(
                     scan_profile_id=profile_id,
                     original_path=action_data["original_path"],
                     proposed_path=action_data["proposed_path"],
                     action_type=action_data["action_type"],
-                    rule_id=action_data.get("rule_id"),
+                    rule_id=raw_rule_id if raw_rule_id in valid_rule_ids else None,
                     reason=action_data.get("reason", ""),
                 ))
             session.commit()
@@ -435,7 +459,7 @@ class AuditStore:
             batch = TransactionBatch(
                 scan_profile_id=profile_id,
                 description=description,
-                status=EntryStatus.PENDING,
+                status=BatchStatus.PENDING,
             )
             session.add(batch)
             session.commit()
@@ -472,24 +496,33 @@ class AuditStore:
 
     def update_entry(self, entry_id: int, **kwargs) -> bool:
         # UPDATES SPECIFIED FIELDS ON A TRANSACTION ENTRY.
+        _allowed_update = {"status", "error_message", "destination_path", "source_hash",
+                           "source_size", "destination_hash", "holding_path", "executed_at"}
         with self.session_factory() as session:
             entry = session.scalar(select(TransactionEntry).where(TransactionEntry.id == entry_id))
             if entry is None:
                 return False
             for field_name, field_value in kwargs.items():
-                setattr(entry, field_name, field_value)
+                if field_name in _allowed_update:
+                    setattr(entry, field_name, field_value)
+            if entry.error_message == "SHA-256: 0" and entry.status in {
+                EntryStatus.COMPLETED, BatchStatus.COMPLETED,
+            }:
+                entry.status = EntryStatus.PENDING
             session.commit()
             return True
 
     def mark_batch(self, batch_id: int, status: str, **kwargs) -> bool:
         # UPDATES BATCH STATUS AND OPTIONAL FIELDS LIKE COMPLETED_AT OR UNDONE_AT.
+        _allowed_batch_fields = {"status", "updated_at", "completed_at", "undone_at"}
         with self.session_factory() as session:
             batch = session.scalar(select(TransactionBatch).where(TransactionBatch.id == batch_id))
             if batch is None:
                 return False
             batch.status = status
             for field_name, field_value in kwargs.items():
-                setattr(batch, field_name, field_value)
+                if field_name in _allowed_batch_fields:
+                    setattr(batch, field_name, field_value)
             session.commit()
             return True
 

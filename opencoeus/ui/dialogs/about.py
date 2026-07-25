@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ... import __version__
-from ..theme import COLORS, dialog_stylesheet
+from ..theme import COLORS, dialog_stylesheet, text_button_qss
 
 
 class AboutDialog(QDialog):
@@ -46,6 +46,7 @@ class AboutDialog(QDialog):
         # CLOSE BUTTON
         close_btn = QPushButton("Close")
         close_btn.setFixedWidth(90)
+        close_btn.setStyleSheet(text_button_qss())
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 

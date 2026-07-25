@@ -232,13 +232,16 @@ def global_stylesheet() -> str:
             background-color: {COLORS['surface']};
             color: {COLORS['text']};
             border: 1px solid {COLORS['border']};
-            border-radius: 6px;
+            border-radius: 8px;
             outline: none;
-            font-size: 12px;
+            font-size: 13px;
+            selection-background-color: {COLORS['surface3']};
+            selection-color: {COLORS['accent']};
         }}
         QTreeWidget::item {{
-            padding: 4px 8px;
-            border: none;
+            padding: 6px 12px;
+            border-bottom: 1px solid {COLORS['border']};
+            min-height: 28px;
         }}
         QTreeWidget::item:selected {{
             background-color: {COLORS['surface3']};
@@ -249,6 +252,33 @@ def global_stylesheet() -> str:
         }}
         QTreeWidget::branch {{
             background: transparent;
+        }}
+        QTreeWidget::indicator {{
+            width: 16px;
+            height: 16px;
+            border: 2px solid {COLORS['border_light']};
+            border-radius: 4px;
+            background-color: {COLORS['surface']};
+        }}
+        QTreeWidget::indicator:checked {{
+            background-color: {COLORS['accent']};
+            border-color: {COLORS['accent']};
+            image: none;
+        }}
+        QTreeWidget::indicator:indeterminate {{
+            background-color: {COLORS['accent']};
+            border-color: {COLORS['accent']};
+        }}
+        QTreeWidget QHeaderView::section {{
+            background-color: {COLORS['surface2']};
+            color: {COLORS['text2']};
+            border: none;
+            border-bottom: 2px solid {COLORS['border']};
+            border-right: 1px solid {COLORS['border']};
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
         }}
 
         /* ---- HEADER VIEWS ---- */
@@ -272,13 +302,16 @@ def global_stylesheet() -> str:
             background-color: {COLORS['surface']};
             color: {COLORS['text']};
             border: 1px solid {COLORS['border']};
-            border-radius: 6px;
-            gridline-color: {COLORS['border']};
+            border-radius: 8px;
+            gridline-color: transparent;
             outline: none;
-            font-size: 12px;
+            font-size: 13px;
+            selection-background-color: {COLORS['surface3']};
+            selection-color: {COLORS['accent']};
         }}
         QTableWidget::item {{
-            padding: 4px 8px;
+            padding: 6px 12px;
+            border-bottom: 1px solid {COLORS['border']};
         }}
         QTableWidget::item:selected {{
             background-color: {COLORS['surface3']};
@@ -286,6 +319,17 @@ def global_stylesheet() -> str:
         }}
         QTableWidget::item:hover {{
             background-color: {COLORS['surface2']};
+        }}
+        QTableWidget QHeaderView::section {{
+            background-color: {COLORS['surface2']};
+            color: {COLORS['text2']};
+            border: none;
+            border-bottom: 2px solid {COLORS['border']};
+            border-right: 1px solid {COLORS['border']};
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
         }}
 
         /* ---- LIST WIDGET ---- */
