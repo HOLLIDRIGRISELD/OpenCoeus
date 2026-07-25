@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...database import AuditStore
-from ..theme import COLORS, dialog_stylesheet
+from ..theme import COLORS, dialog_stylesheet, text_button_qss
 
 
 class BatchDetailDialog(QDialog):
@@ -67,6 +67,7 @@ class BatchDetailDialog(QDialog):
         btn_row.addStretch()
         close_btn = QPushButton("Close")
         close_btn.setFixedWidth(90)
+        close_btn.setStyleSheet(text_button_qss())
         close_btn.clicked.connect(self.close)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)

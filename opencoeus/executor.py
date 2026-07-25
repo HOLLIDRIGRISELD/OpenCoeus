@@ -152,7 +152,11 @@ def cleanup_empty_folders(root_path: Path, excluded_folders: set[str] | None = N
             continue
         if dir_path.name == ".opencoeus":
             continue
-        if any(dir_path.as_posix().startswith(Path(ex).as_posix()) for ex in excluded):
+        if any(
+            dir_path.as_posix().startswith(Path(ex).as_posix() + "/") or
+            dir_path.as_posix() == Path(ex).as_posix()
+            for ex in excluded
+        ):
             continue
         # RECHECK ACTUAL CONTENTS (OS.WALK DIRNAMES STALE AFTER CHILD REMOVAL).
         try:
@@ -204,8 +208,7 @@ def recover_crashed_batches(store: AuditStore) -> int:
     from sqlalchemy import select
     from .models import TransactionBatch
     logger = logging.getLogger(__name__)
-    if not _batch_lock.acquire(blocking=True):
-        return 0
+    _batch_lock.acquire(blocking=True)
     try:
         recovered = 0
         with store.session_factory() as session:
@@ -402,6 +405,9 @@ def rollback_partial(
             if holding_path.exists():
                 safe_move(holding_path, source)
                 store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
+            else:
+                errors.append(f"Holding file missing for {entry.source_path}")
+                store.update_entry(entry.id, status=EntryStatus.FAILED, error_message="Holding file missing")
         except Exception as exc:
             errors.append(f"Failed to restore {holding_path} to {source}: {exc}")
             logger.error("Rollback failed for %s: %s", holding_path, exc)
@@ -430,6 +436,10 @@ def rollback_remaining(
                 safe_move(holding_path, source)
                 if entry.id != failed_entry_id:
                     store.update_entry(entry.id, status=EntryStatus.PENDING, holding_path=None, error_message=None)
+            else:
+                errors.append(f"Holding file missing for {entry.source_path}")
+                if entry.id != failed_entry_id:
+                    store.update_entry(entry.id, status=EntryStatus.FAILED, error_message="Holding file missing")
         except Exception as exc:
             errors.append(f"Failed to restore {holding_path} to {source}: {exc}")
             logger.error("Rollback failed for %s: %s", holding_path, exc)

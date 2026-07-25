@@ -61,6 +61,7 @@ class RuleEditDialog(QDialog):
 
         buttons = QHBoxLayout()
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(text_button_qss())
         cancel_btn.clicked.connect(self.reject)
         buttons.addWidget(cancel_btn)
         save_btn = QPushButton("Save")

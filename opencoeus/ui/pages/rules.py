@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
@@ -9,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import COLORS
+from ..theme import COLORS, accent_button_qss, text_button_qss, warning_button_qss, danger_button_qss
 from ...database import AuditStore
 from ..dialogs import RuleEditDialog
 from .common import make_table, make_container, section_title
@@ -42,21 +43,25 @@ class RulesPage(QWidget):
 
         btn_add = QPushButton("+ Add Rule")
         btn_add.setToolTip("Add a new organization rule")
+        btn_add.setStyleSheet(accent_button_qss())
         btn_add.clicked.connect(self._add_rule)
         toolbar.addWidget(btn_add)
 
         btn_edit = QPushButton("Edit")
         btn_edit.setToolTip("Edit the selected rule")
+        btn_edit.setStyleSheet(text_button_qss())
         btn_edit.clicked.connect(self._edit_rule)
         toolbar.addWidget(btn_edit)
 
         btn_toggle = QPushButton("Enable / Disable")
         btn_toggle.setToolTip("Toggle enabled state of the selected rule")
+        btn_toggle.setStyleSheet(warning_button_qss())
         btn_toggle.clicked.connect(self._toggle_rule)
         toolbar.addWidget(btn_toggle)
 
         btn_delete = QPushButton("Delete")
         btn_delete.setToolTip("Delete the selected rules")
+        btn_delete.setStyleSheet(danger_button_qss())
         btn_delete.clicked.connect(self._delete_rule)
         toolbar.addWidget(btn_delete)
 
@@ -124,7 +129,7 @@ class RulesPage(QWidget):
             if enabled == "No":
                 enabled_item.setForeground(self._color("text2", "#7f848e"))
             else:
-                enabled_item.setForeground(self._color("success", "#98c379"))
+                enabled_item.setForeground(self._color("green", "#98c379"))
             self.rules_table.setItem(r, 4, enabled_item)
 
             self.rules_table.setItem(r, 5, QTableWidgetItem(priority))
@@ -137,11 +142,11 @@ class RulesPage(QWidget):
         """OPEN RULEEDITDIALOG AND SAVE TO DB."""
         dialog = RuleEditDialog(self)
         if dialog.exec():
-            rule = dialog.get_rule()
+            rule = dialog.get_data()
             if self._store is not None:
                 self._store.add_rule(rule)
-            if self._main is not None and hasattr(self._main, "current_profile"):
-                self.load_rules(self._main.current_profile)
+            if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
+                self.load_rules(self._main.current_profile.profile_id)
 
     # ── EDIT RULE ──────────────────────────────────────────────────────────
 
@@ -159,11 +164,11 @@ class RulesPage(QWidget):
         rule = rules[row]
         dialog = RuleEditDialog(self, rule=rule)
         if dialog.exec():
-            updated = dialog.get_rule()
+            updated = dialog.get_data()
             if self._store is not None and "id" in rule:
                 self._store.update_rule(rule["id"], updated)
-            if self._main is not None and hasattr(self._main, "current_profile"):
-                self.load_rules(self._main.current_profile)
+            if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
+                self.load_rules(self._main.current_profile.profile_id)
 
     # ── TOGGLE RULE ────────────────────────────────────────────────────────
 
@@ -186,8 +191,8 @@ class RulesPage(QWidget):
                 new_state = not rule.get("enabled", True)
                 self._store.toggle_rule(rule["id"], new_state)
 
-        if self._main is not None and hasattr(self._main, "current_profile"):
-            self.load_rules(self._main.current_profile)
+        if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
+            self.load_rules(self._main.current_profile.profile_id)
 
     # ── DELETE RULE ────────────────────────────────────────────────────────
 
@@ -218,16 +223,16 @@ class RulesPage(QWidget):
             if "id" in rule:
                 self._store.delete_rule(rule["id"])
 
-        if self._main is not None and hasattr(self._main, "current_profile"):
-            self.load_rules(self._main.current_profile)
+        if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
+            self.load_rules(self._main.current_profile.profile_id)
 
     # ── HELPERS ────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _color(key: str, default: str) -> str:
+    def _color(key: str, default: str) -> QColor:
         """GET COLOR FROM THEME OR FALLBACK."""
         try:
-            from ..theme import COLORS
-            return COLORS.get(key, default)
+            from ..theme import COLORS as _C
+            return QColor(_C.get(key, default))
         except ImportError:
-            return default
+            return QColor(default)

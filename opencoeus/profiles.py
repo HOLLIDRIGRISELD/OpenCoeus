@@ -68,7 +68,7 @@ def update_profile(store: AuditStore, profile_id: int, **kwargs) -> ProfileConfi
     serializable_keys = {"included_folders", "excluded_folders", "custom_protected_patterns"}
     for key in serializable_keys:
         if key in kwargs and isinstance(kwargs[key], ProfileConfig):
-            continue
+            kwargs[key] = getattr(kwargs[key], key, [])
     db_profile = store.update_profile(profile_id, **kwargs)
     if db_profile is None:
         return None

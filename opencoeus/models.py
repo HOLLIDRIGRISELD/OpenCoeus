@@ -8,19 +8,19 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class BatchStatus(StrEnum):
-    PENDING = "pending"
-    EXECUTING = "executing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    UNDONE = "undone"
+    PENDING = "PENDING"
+    EXECUTING = "EXECUTING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    UNDONE = "UNDONE"
 
 
 class EntryStatus(StrEnum):
-    PENDING = "pending"
-    MOVED_TO_HOLDING = "moved_to_holding"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    UNDONE = "undone"
+    PENDING = "PENDING"
+    MOVED_TO_HOLDING = "MOVED_TO_HOLDING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    UNDONE = "UNDONE"
 
 
 class Base(DeclarativeBase):
@@ -121,7 +121,7 @@ class TransactionBatch(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     scan_profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("scan_profiles.id"), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     undone_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -139,7 +139,7 @@ class TransactionEntry(Base):
     source_hash: Mapped[str] = mapped_column(String(64), default="")
     destination_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_size: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
     holding_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))

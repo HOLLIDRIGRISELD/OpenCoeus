@@ -7,7 +7,7 @@ from pathlib import Path
 from .database import AuditStore
 from .executor import execute_batch, undo_batch, ExecutionResult
 from .hashing import sha256_file
-from .models import EntryStatus
+from .models import BatchStatus, EntryStatus
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
         batch = TransactionBatch(
             scan_profile_id=profile_id,
             description=description or f"{len(approved)} file moves",
-            status=EntryStatus.PENDING,
+            status=BatchStatus.PENDING,
         )
         session.add(batch)
         session.flush()

@@ -15,9 +15,7 @@ from .profiles import (
     create_profile,
     delete_profile,
     list_profiles,
-    load_profile,
     load_profile_by_name,
-    update_profile,
 )
 from .rules_engine import DEFAULT_RULES, RulesEngine
 
@@ -90,77 +88,76 @@ def _run_scan(args) -> int:
         return 1
     extract_documents = not args.no_document_text
     store = AuditStore()
-    # LOAD PROFILE IF SPECIFIED AND APPLY ITS SETTINGS.
-    profile = ProfileConfig()
-    if args.profile:
-        loaded = load_profile_by_name(store, args.profile)
-        if loaded is None:
-            print(f"Warning: Profile '{args.profile}' not found. Using defaults.", file=sys.stderr)
+    try:
+        # LOAD PROFILE IF SPECIFIED AND APPLY ITS SETTINGS.
+        profile = ProfileConfig()
+        if args.profile:
+            loaded = load_profile_by_name(store, args.profile)
+            if loaded is None:
+                print(f"Warning: Profile '{args.profile}' not found. Using defaults.", file=sys.stderr)
+            else:
+                profile = loaded
+                if loaded.excluded_folders:
+                    print(f"Profile '{args.profile}': excluding {len(loaded.excluded_folders)} folders.")
+                if loaded.custom_protected_patterns:
+                    print(f"Profile '{args.profile}': using {len(loaded.custom_protected_patterns)} custom patterns.")
+                if not loaded.document_extraction:
+                    extract_documents = False
+        settings = ScanSettings(args.folder, extract_documents=extract_documents)
+        # USE PHASE TWO PIPELINE IF PROFILE HAS EXCLUSIONS, OTHERWISE SINGLE-PHASE SCAN.
+        excluded_folders = set(profile.excluded_folders) if profile.excluded_folders else None
+        if excluded_folders:
+            scan_engine = ScanEngine(settings, store)
+            scan_result = scan_engine.run_phase_two(excluded_folders, print)
         else:
-            profile = loaded
-            if loaded.excluded_folders:
-                print(f"Profile '{args.profile}': excluding {len(loaded.excluded_folders)} folders.")
-            if loaded.custom_protected_patterns:
-                print(f"Profile '{args.profile}': using {len(loaded.custom_protected_patterns)} custom patterns.")
-            if not loaded.document_extraction:
-                extract_documents = False
-    settings = ScanSettings(args.folder, extract_documents=extract_documents)
-    # USE PHASE TWO PIPELINE IF PROFILE HAS EXCLUSIONS, OTHERWISE SINGLE-PHASE SCAN.
-    excluded_folders = set(profile.excluded_folders) if profile.excluded_folders else None
-    if excluded_folders:
-        scan_engine = ScanEngine(settings, store)
-        scan_result = scan_engine.run_phase_two(excluded_folders, print)
-    else:
-        scan_engine = ScanEngine(settings, store)
-        scan_result = scan_engine.run(print)
-    write_manifest(scan_result, args.output)
-    print(f"Scanned {len(scan_result.rows)} files; found {scan_result.duplicate_count} duplicates. Manifest: {args.output}")
-    for scan_error in scan_result.errors:
-        print(f"WARNING: {scan_error}")
-    store.close()
+            scan_engine = ScanEngine(settings, store)
+            scan_result = scan_engine.run(print)
+        write_manifest(scan_result, args.output)
+        print(f"Scanned {len(scan_result.rows)} files; found {scan_result.duplicate_count} duplicates. Manifest: {args.output}")
+        for scan_error in scan_result.errors:
+            print(f"WARNING: {scan_error}")
+    finally:
+        store.close()
     return 0
 
 
 def _run_profile(args) -> int:
     store = AuditStore()
-    if args.profile_action == "list":
-        profiles = list_profiles(store)
-        if not profiles:
-            print("No profiles saved.")
-        for profile in profiles:
-            print(f"  {profile.name}  root={profile.root_path}  extract_docs={profile.document_extraction}")
-        store.close()
+    try:
+        if args.profile_action == "list":
+            profiles = list_profiles(store)
+            if not profiles:
+                print("No profiles saved.")
+            for profile in profiles:
+                print(f"  {profile.name}  root={profile.root_path}  extract_docs={profile.document_extraction}")
+            return 0
+        if args.profile_action == "create":
+            created = create_profile(store, args.name, root_path=args.root)
+            print(f"Created profile '{created.name}' (id={created.profile_id}).")
+            return 0
+        if args.profile_action == "delete":
+            profile = load_profile_by_name(store, args.name)
+            if profile is None:
+                print(f"Error: Profile '{args.name}' not found.", file=sys.stderr)
+                return 1
+            delete_profile(store, profile.profile_id)
+            print(f"Deleted profile '{args.name}'.")
+            return 0
+        if args.profile_action == "show":
+            profile = load_profile_by_name(store, args.name)
+            if profile is None:
+                print(f"Error: Profile '{args.name}' not found.", file=sys.stderr)
+                return 1
+            print(f"Name: {profile.name}")
+            print(f"Root: {profile.root_path}")
+            print(f"Included: {profile.included_folders}")
+            print(f"Excluded: {profile.excluded_folders}")
+            print(f"Custom patterns: {profile.custom_protected_patterns}")
+            print(f"Document extraction: {profile.document_extraction}")
+            return 0
         return 0
-    if args.profile_action == "create":
-        created = create_profile(store, args.name, root_path=args.root)
-        print(f"Created profile '{created.name}' (id={created.profile_id}).")
+    finally:
         store.close()
-        return 0
-    if args.profile_action == "delete":
-        profile = load_profile_by_name(store, args.name)
-        if profile is None:
-            print(f"Error: Profile '{args.name}' not found.", file=sys.stderr)
-            store.close()
-            return 1
-        delete_profile(store, profile.profile_id)
-        print(f"Deleted profile '{args.name}'.")
-        store.close()
-        return 0
-    if args.profile_action == "show":
-        profile = load_profile_by_name(store, args.name)
-        if profile is None:
-            print(f"Error: Profile '{args.name}' not found.", file=sys.stderr)
-            store.close()
-            return 1
-        print(f"Name: {profile.name}")
-        print(f"Root: {profile.root_path}")
-        print(f"Included: {profile.included_folders}")
-        print(f"Excluded: {profile.excluded_folders}")
-        print(f"Custom patterns: {profile.custom_protected_patterns}")
-        print(f"Document extraction: {profile.document_extraction}")
-        store.close()
-        return 0
-    return 0
 
 
 def _run_classify(args) -> int:
@@ -190,139 +187,138 @@ def _run_organize(args) -> int:
     extract_documents = not args.no_document_text
     settings = ScanSettings(args.folder, extract_documents=extract_documents)
     store = AuditStore()
+    try:
+        # LOAD PROFILE IF SPECIFIED.
+        profile = ProfileConfig()
+        if args.profile:
+            loaded = load_profile_by_name(store, args.profile)
+            if loaded is None:
+                print(f"Warning: Profile '{args.profile}' not found. Using defaults.", file=sys.stderr)
+            else:
+                profile = loaded
 
-    # LOAD PROFILE IF SPECIFIED.
-    profile = ProfileConfig()
-    if args.profile:
-        loaded = load_profile_by_name(store, args.profile)
-        if loaded is None:
-            print(f"Warning: Profile '{args.profile}' not found. Using defaults.", file=sys.stderr)
+        # LOAD RULES FROM FILE OR USE DEFAULTS.
+        rules = list(DEFAULT_RULES)
+        if args.rules_file and args.rules_file.is_file():
+            with args.rules_file.open(encoding="utf-8") as rules_json:
+                rules = json.load(rules_json)
+            print(f"Loaded {len(rules)} rules from {args.rules_file}")
+
+        # PHASE 1: CLASSIFY FOLDERS.
+        print("Phase 1: Classifying folders...")
+        tree = build_folder_tree(args.folder, settings.protected_patterns)
+        classifications = classify_tree(tree, profile.custom_protected_patterns or None)
+        excluded_folders = {
+            c["folder_path"] for c in classifications
+            if c["recommended_action"] == "exclude"
+        }
+        print(f"  Excluded {len(excluded_folders)} folders automatically.")
+
+        # PHASE 2: SCAN FILES WITH EXCLUSIONS AND APPLY RULES.
+        print("Phase 2: Scanning files...")
+        scan_engine = ScanEngine(settings, store)
+        scan_result = scan_engine.run_phase_two(excluded_folders, print)
+        print(f"  Scanned {len(scan_result.rows)} files, found {scan_result.duplicate_count} duplicates.")
+
+        # APPLY RULES ENGINE.
+        rules_engine = RulesEngine(profile, scan_root=settings.root.as_posix())
+        matches = rules_engine.evaluate(scan_result.rows, rules)
+
+        if matches:
+            import csv
+            with args.output.open("w", newline="", encoding="utf-8-sig") as csv_file:
+                writer = csv.DictWriter(csv_file, fieldnames=["original_path", "proposed_path", "action_type", "rule_id", "reason"])
+                writer.writeheader()
+                for match in matches:
+                    writer.writerow({
+                        "original_path": match.original_path,
+                        "proposed_path": match.proposed_path,
+                        "action_type": match.action_type,
+                        "rule_id": match.rule_id or "",
+                        "reason": match.reason,
+                    })
+            print(f"\nProposed {len(matches)} actions. Saved to {args.output}")
+            print("\nPreview (first 10):")
+            for match in matches[:10]:
+                print(f"  {match.action_type:6s}  {match.original_path}")
+                print(f"         -> {match.proposed_path}")
+                print(f"         {match.reason}")
+            if len(matches) > 10:
+                print(f"  ... and {len(matches) - 10} more.")
         else:
-            profile = loaded
-
-    # LOAD RULES FROM FILE OR USE DEFAULTS.
-    rules = list(DEFAULT_RULES)
-    if args.rules_file and args.rules_file.is_file():
-        with args.rules_file.open(encoding="utf-8") as rules_json:
-            rules = json.load(rules_json)
-        print(f"Loaded {len(rules)} rules from {args.rules_file}")
-
-    # PHASE 1: CLASSIFY FOLDERS.
-    print("Phase 1: Classifying folders...")
-    tree = build_folder_tree(args.folder, settings.protected_patterns)
-    classifications = classify_tree(tree, profile.custom_protected_patterns or None)
-    excluded_folders = {
-        c["folder_path"] for c in classifications
-        if c["recommended_action"] == "exclude"
-    }
-    print(f"  Excluded {len(excluded_folders)} folders automatically.")
-
-    # PHASE 2: SCAN FILES WITH EXCLUSIONS AND APPLY RULES.
-    print("Phase 2: Scanning files...")
-    scan_engine = ScanEngine(settings)
-    scan_result = scan_engine.run_phase_two(excluded_folders, print)
-    print(f"  Scanned {len(scan_result.rows)} files, found {scan_result.duplicate_count} duplicates.")
-
-    # APPLY RULES ENGINE.
-    rules_engine = RulesEngine(profile, scan_root=settings.root.as_posix())
-    matches = rules_engine.evaluate(scan_result.rows, rules)
-
-    if matches:
-        import csv
-        with args.output.open("w", newline="", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=["original_path", "proposed_path", "action_type", "rule_id", "reason"])
-            writer.writeheader()
-            for match in matches:
-                writer.writerow({
-                    "original_path": match.original_path,
-                    "proposed_path": match.proposed_path,
-                    "action_type": match.action_type,
-                    "rule_id": match.rule_id or "",
-                    "reason": match.reason,
-                })
-        print(f"\nProposed {len(matches)} actions. Saved to {args.output}")
-        print("\nPreview (first 10):")
-        for match in matches[:10]:
-            print(f"  {match.action_type:6s}  {match.original_path}")
-            print(f"         -> {match.proposed_path}")
-            print(f"         {match.reason}")
-        if len(matches) > 10:
-            print(f"  ... and {len(matches) - 10} more.")
-    else:
-        print("\nNo actions proposed. Files are already organized or no rules matched.")
-    store.close()
+            print("\nNo actions proposed. Files are already organized or no rules matched.")
+    finally:
+        store.close()
     return 0
 
 
 def _run_execute(args) -> int:
     store = AuditStore()
-    # DETERMINE PROFILE ID.
-    profile_id = None
-    if args.profile:
-        loaded = load_profile_by_name(store, args.profile)
-        if loaded is None:
-            print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
-            store.close()
+    try:
+        # DETERMINE PROFILE ID.
+        profile_id = None
+        if args.profile:
+            loaded = load_profile_by_name(store, args.profile)
+            if loaded is None:
+                print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
+                return 1
+            profile_id = loaded.profile_id
+        # CHECK FOR APPROVED ACTIONS.
+        actions = store.get_proposed_actions(profile_id or 1)
+        approved = [a for a in actions if a.approved]
+        if not approved:
+            print("No approved actions to execute.", file=sys.stderr)
             return 1
-        profile_id = loaded.profile_id
-    # CHECK FOR APPROVED ACTIONS.
-    actions = store.get_proposed_actions(profile_id or 1)
-    approved = [a for a in actions if a.approved]
-    if not approved:
-        print("No approved actions to execute.", file=sys.stderr)
+        print(f"Found {len(approved)} approved actions.")
+        if args.dry_run:
+            for action in approved:
+                print(f"  {action.action_type:6s}  {action.original_path}")
+                print(f"         -> {action.proposed_path}")
+            print("\nDry run complete. No files were moved.")
+            return 0
+        # PREPARE AND EXECUTE.
+        from .journal import prepare_execution, run_execution
+        batch_id, count = prepare_execution(store, profile_id or 1, f"{len(approved)} file moves via CLI")
+        if batch_id == 0:
+            print("Failed to create execution batch.", file=sys.stderr)
+            return 1
+        print(f"Executing batch {batch_id} ({count} files)...")
+        def progress(msg):
+            print(f"  {msg}")
+        result = run_execution(batch_id, store, progress)
+        print(f"\nExecution complete: {result.completed} completed, {result.failed} failed.")
+        if result.errors:
+            for error in result.errors:
+                print(f"  ERROR: {error}", file=sys.stderr)
+        return 0 if result.failed == 0 else 1
+    finally:
         store.close()
-        return 1
-    print(f"Found {len(approved)} approved actions.")
-    if args.dry_run:
-        for action in approved:
-            print(f"  {action.action_type:6s}  {action.original_path}")
-            print(f"         -> {action.proposed_path}")
-        print("\nDry run complete. No files were moved.")
-        store.close()
-        return 0
-    # PREPARE AND EXECUTE.
-    from .journal import prepare_execution, run_execution
-    batch_id, count = prepare_execution(store, profile_id or 1, f"{len(approved)} file moves via CLI")
-    if batch_id == 0:
-        print("Failed to create execution batch.", file=sys.stderr)
-        store.close()
-        return 1
-    print(f"Executing batch {batch_id} ({count} files)...")
-    def progress(msg):
-        print(f"  {msg}")
-    result = run_execution(batch_id, store, progress)
-    print(f"\nExecution complete: {result.completed} completed, {result.failed} failed.")
-    if result.errors:
-        for error in result.errors:
-            print(f"  ERROR: {error}", file=sys.stderr)
-    store.close()
-    return 0 if result.failed == 0 else 1
 
 
 def _run_undo(args) -> int:
     store = AuditStore()
-    # DETERMINE PROFILE ID.
-    profile_id = None
-    if args.profile:
-        loaded = load_profile_by_name(store, args.profile)
-        if loaded is None:
-            print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
-            store.close()
+    try:
+        # DETERMINE PROFILE ID.
+        profile_id = None
+        if args.profile:
+            loaded = load_profile_by_name(store, args.profile)
+            if loaded is None:
+                print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
+                return 1
+            profile_id = loaded.profile_id
+        # FIND LATEST COMPLETED BATCH.
+        from .journal import undo_last_batch
+        batch_id, errors = undo_last_batch(store, profile_id)
+        if batch_id is None:
+            print("No completed batches to undo.", file=sys.stderr)
             return 1
-        profile_id = loaded.profile_id
-    # FIND LATEST COMPLETED BATCH.
-    from .journal import undo_last_batch
-    batch_id, errors = undo_last_batch(store, profile_id)
-    if batch_id is None:
-        print("No completed batches to undo.", file=sys.stderr)
+        print(f"Undone batch {batch_id}.")
+        if errors:
+            for error in errors:
+                print(f"  WARNING: {error}", file=sys.stderr)
+        return 0
+    finally:
         store.close()
-        return 1
-    print(f"Undone batch {batch_id}.")
-    if errors:
-        for error in errors:
-            print(f"  WARNING: {error}", file=sys.stderr)
-    store.close()
-    return 0
 
 
 if __name__ == "__main__":
