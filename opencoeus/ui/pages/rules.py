@@ -77,19 +77,19 @@ class RulesPage(QWidget):
 
         root.addStretch()
 
-    # ── MAIN WINDOW REFERENCE ──────────────────────────────────────────────
+    # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
         """STORE REFERENCE TO MAIN WINDOW."""
         self._main = main
 
-    # ── STORE REFERENCE ────────────────────────────────────────────────────
+    # STORE REFERENCE
 
     def set_store(self, store: AuditStore):
         """SET THE AUDITSTORE REFERENCE."""
         self._store = store
 
-    # ── LOAD RULES ─────────────────────────────────────────────────────────
+    # LOAD RULES
 
     def load_rules(self, profile_id):
         """LOAD RULES FROM DATABASE, FALL BACK TO DEFAULT_RULES."""
@@ -104,7 +104,7 @@ class RulesPage(QWidget):
         self._all_rules = DEFAULT_RULES[:]
         self.refresh_table()
 
-    # ── REFRESH TABLE ──────────────────────────────────────────────────────
+    # REFRESH TABLE
 
     def refresh_table(self):
         """POPULATE RULES TABLE FROM LOADED RULES."""
@@ -136,7 +136,7 @@ class RulesPage(QWidget):
 
         self.rules_table.setSortingEnabled(True)
 
-    # ── ADD RULE ───────────────────────────────────────────────────────────
+    # ADD RULE
 
     def _add_rule(self):
         """OPEN RULEEDITDIALOG AND SAVE TO DB."""
@@ -148,7 +148,7 @@ class RulesPage(QWidget):
             if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
                 self.load_rules(self._main.current_profile.profile_id)
 
-    # ── EDIT RULE ──────────────────────────────────────────────────────────
+    # EDIT RULE
 
     def _edit_rule(self):
         """OPEN RULEEDITDIALOG WITH THE SELECTED RULE AND UPDATE IN DB."""
@@ -170,7 +170,7 @@ class RulesPage(QWidget):
             if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
                 self.load_rules(self._main.current_profile.profile_id)
 
-    # ── TOGGLE RULE ────────────────────────────────────────────────────────
+    # TOGGLE RULE
 
     def _toggle_rule(self):
         """TOGGLE ENABLED/DISABLED IN DB."""
@@ -194,7 +194,7 @@ class RulesPage(QWidget):
         if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
             self.load_rules(self._main.current_profile.profile_id)
 
-    # ── DELETE RULE ────────────────────────────────────────────────────────
+    # DELETE RULE
 
     def _delete_rule(self):
         """DELETE SELECTED RULES FROM DB."""
@@ -226,7 +226,7 @@ class RulesPage(QWidget):
         if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
             self.load_rules(self._main.current_profile.profile_id)
 
-    # ── HELPERS ────────────────────────────────────────────────────────────
+    # HELPERS
 
     @staticmethod
     def _color(key: str, default: str) -> QColor:

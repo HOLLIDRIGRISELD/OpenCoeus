@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
         painter.end()
         return QIcon(pixmap)
 
-    # ---- UI CONSTRUCTION ---- #
+    # UI CONSTRUCTION
     def _build_ui(self) -> None:
         central = QWidget()
         central.setObjectName("central")
@@ -327,7 +327,7 @@ class MainWindow(QMainWindow):
         dialog = AboutDialog(self)
         dialog.exec()
 
-    # ---- PAGE NAVIGATION ---- #
+    # PAGE NAVIGATION
     def _switch_page(self, index: int) -> None:
         if index < 0 or index >= len(self._pages):
             return
@@ -341,7 +341,7 @@ class MainWindow(QMainWindow):
         if folder:
             self.folder_path_input.setText(folder)
 
-    # ---- LOG ---- #
+    # LOG
     def _on_log_message(self, msg: str) -> None:
         self._log_buffer.append(msg)
         if not self._log_timer.isActive():
@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
             self._log_buffer.clear()
         self._log_timer.stop()
 
-    # ---- PHASE ONE ---- #
+    # PHASE ONE
     def _start_phase_one(self) -> None:
         folder = Path(self.folder_path_input.text())
         if not folder.is_dir():
@@ -399,7 +399,7 @@ class MainWindow(QMainWindow):
         logger.error("Scan failed: %s", msg)
         QMessageBox.critical(self, "Scan failed", msg)
 
-    # ---- PHASE TWO ---- #
+    # PHASE TWO
     def _start_phase_two(self) -> None:
         folder = Path(self.folder_path_input.text())
         if not folder.is_dir():
@@ -458,7 +458,7 @@ class MainWindow(QMainWindow):
             f"<b>Phase 2:</b> {len(scan_result.rows)} files, {dup} duplicates, {len(matches)} actions proposed."
         )
 
-    # ---- EXPORT ---- #
+    # EXPORT
     def _export_manifest(self) -> None:
         if not self.scan_result:
             return
@@ -471,7 +471,7 @@ class MainWindow(QMainWindow):
             )
             self.export_worker.start()
 
-    # ---- EXECUTE APPROVED ACTIONS ---- #
+    # EXECUTE APPROVED ACTIONS
     def _execute_approved(self) -> None:
         if self.prepare_worker and self.prepare_worker.isRunning():
             return
@@ -539,7 +539,7 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "Execution", f"Successfully moved {result.completed} files.")
 
-    # ---- UNDO LAST BATCH ---- #
+    # UNDO LAST BATCH
     def _undo_last_batch(self) -> None:
         if self.undo_worker and self.undo_worker.isRunning():
             return
@@ -579,7 +579,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Undo complete.", 5000)
             QMessageBox.information(self, "Undo", "Batch undone. Files restored.")
 
-    # ---- THREAD CLEANUP ---- #
+    # THREAD CLEANUP
     def _cleanup_workers(self) -> None:
         for worker in (self.phase_one_worker, self.phase_two_worker,
                        self.execution_worker, self.prepare_worker,
@@ -601,11 +601,11 @@ class MainWindow(QMainWindow):
         self._cleanup_workers()
         event.accept()
 
-    # ---- PROFILES ---- #
+    # PROFILES
     def _load_profiles(self) -> None:
         self.home_page.load_profiles(self.store)
 
-    # ---- CRASH RECOVERY ---- #
+    # CRASH RECOVERY
     def _recover_crashed_batches(self) -> None:
         from ..executor import recover_crashed_batches
         try:

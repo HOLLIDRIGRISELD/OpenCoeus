@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 
-# ── HELPERS ────────────────────────────────────────────────────────────────
+# HELPERS
 
 def section_title(text: str) -> QLabel:
     from ..theme import COLORS
@@ -72,7 +72,7 @@ def fmt_size(size: int) -> str:
     return f"{size / 1048576:.1f} MB"
 
 
-# ── CARD TABLE ─────────────────────────────────────────────────────────────
+# CARD TABLE
 
 class CardRow(QFrame):
     """A SINGLE ROW IN THE CARD TABLE, STYLED AS A CARD."""
@@ -347,7 +347,7 @@ class CardTable(QWidget):
             r.row_index = i
 
 
-# ── CARD TREE ──────────────────────────────────────────────────────────────
+# CARD TREE
 
 class _CardTreeRow(QFrame):
     """A SINGLE ROW IN THE CARD TREE, STYLED AS A CARD."""
@@ -512,7 +512,7 @@ class CardTree(QWidget):
         self._scroll.setWidget(self._rows_container)
         root.addWidget(self._scroll)
 
-    # ── STYLING HELPERS ─────────────────────────────────────────────────────
+    # STYLING HELPERS
 
     def _checkbox_qss(self, checked: bool) -> str:
         """RETURN QSS FOR A CUSTOM CHECKBOX BUTTON."""
@@ -554,7 +554,7 @@ class CardTree(QWidget):
             }}
         """
 
-    # ── PUBLIC API ──────────────────────────────────────────────────────────
+    # PUBLIC API
 
     def clear(self):
         """REMOVE ALL ROWS AND RESET STATE."""
@@ -737,7 +737,7 @@ class CardTree(QWidget):
                 nd["arrow_ref"].setText("▶")
                 self._rows[i].setVisible(False)
 
-    # ── EXPAND / COLLAPSE ──────────────────────────────────────────────────
+    # EXPAND / COLLAPSE
 
     def _toggle_expand(self, row_index: int):
         """TOGGLE EXPAND/COLLAPSE FOR A NODE."""
@@ -764,7 +764,7 @@ class CardTree(QWidget):
             if child_nd["has_children"]:
                 self._set_descendants_visible(child_idx, visible and child_nd["expanded"])
 
-    # ── CHECKBOX HANDLING ──────────────────────────────────────────────────
+    # CHECKBOX HANDLING
 
     def _on_checkbox_clicked(self, row_index: int, checked: bool):
         """HANDLE CHECKBOX TOGGLE WITH CHILD/PARENT PROPAGATION."""
@@ -835,7 +835,7 @@ class CardTree(QWidget):
         # RECURSE UP.
         self._update_parent_state(parent_idx)
 
-    # ── ROW SELECTION ──────────────────────────────────────────────────────
+    # ROW SELECTION
 
     def _on_row_clicked(self, index: int):
         """HANDLE ROW CLICK FOR SELECTION."""
@@ -849,7 +849,7 @@ class CardTree(QWidget):
             self._rows[index].set_selected(True)
         self.row_clicked.emit(index)
 
-    # ── PUBLIC ACCESSORS ───────────────────────────────────────────────────
+    # PUBLIC ACCESSORS
 
     def getExcludedPaths(self) -> set[str]:
         """RETURN SET OF ALL EXCLUDED FOLDER PATHS."""
@@ -876,7 +876,7 @@ class CardTree(QWidget):
         return False
 
 
-# ── LEGACY HELPERS (KEPT FOR COMPATIBILITY) ────────────────────────────────
+# LEGACY HELPERS (KEPT FOR COMPATIBILITY)
 
 def make_table(headers, stretch_column=0, select_mode=None):
     from PyQt6.QtWidgets import QTableWidget, QHeaderView

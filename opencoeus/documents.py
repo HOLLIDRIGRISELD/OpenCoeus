@@ -25,7 +25,7 @@ def extract_text(document_path: Path, maximum_pages: int = 2) -> str:
 
 
 def suggest_title(document_text: str, fallback_title: str) -> str:
-    # SELECTS A SHORT, READABLE LINE FROM DOCUMENT TEXT AS A TITLE SUGGESTION.
+    # SELECTS A SHORT, READABLE LINE FROM DOCUMENT TEXT AS A TITLE SUGGESTION
     text_lines = [re.sub(r"\s+", " ", line).strip() for line in document_text.splitlines()]
     candidate_titles = [line for line in text_lines if 8 <= len(line) <= 100 and any(character.isalpha() for character in line)]
     selected_title = candidate_titles[0] if candidate_titles else fallback_title

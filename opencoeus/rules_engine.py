@@ -11,9 +11,7 @@ from .engine import ManifestRow
 from .profiles import ProfileConfig
 
 
-# ------------------------------------------------------------------ #
-#  DEFAULT RULES                                                        #
-# ------------------------------------------------------------------ #
+# DEFAULT RULES
 
 DEFAULT_RULES = [
     {"id": 1, "name": "Documents", "rule_type": "extension", "enabled": True, "priority": 10,
@@ -54,7 +52,7 @@ DEFAULT_RULES = [
 
 @dataclass
 class RuleMatch:
-    # REPRESENTS A SINGLE RULE MATCH RESULT WITH THE PROPOSED ACTION DETAILS.
+    # REPRESENTS A SINGLE RULE MATCH RESULT WITH THE PROPOSED ACTION DETAILS
     original_path: str
     proposed_path: str
     action_type: str
@@ -63,17 +61,17 @@ class RuleMatch:
 
 
 class RulesEngine:
-    # DETERMINISTIC RULES ENGINE THAT PROPOSES FILE ACTIONS WITHOUT AI.
-    # APPLIES EXTENSION, PATTERN, DATE, SIZE, AND FOLDER-BASED RULES IN PRIORITY ORDER.
+    # DETERMINISTIC RULES ENGINE THAT PROPOSES FILE ACTIONS WITHOUT AI
+    # APPLIES EXTENSION, PATTERN, DATE, SIZE, AND FOLDER BASED RULES IN PRIORITY ORDER
 
     def __init__(self, profile: ProfileConfig, scan_root: str = "") -> None:
         self.profile = profile
         self.scan_root = scan_root.rstrip("/").rstrip("\\")
 
     def evaluate(self, manifest_rows: list[ManifestRow], rules: list[dict]) -> list[RuleMatch]:
-        # EVALUATES ALL ENABLED RULES AGAINST EVERY MANIFEST ROW AND COLLECTS MATCHES.
-        # PRE-PARSE ALL RULE CONFIGS ONCE TO AVOID PER-ROW JSON PARSING.
-        # WORK ON COPIES TO AVOID MUTATING CALLER'S RULE DICTS.
+        # EVALUATES ALL ENABLED RULES AGAINST EVERY MANIFEST ROW AND COLLECTS MATCHES
+        # PRE PARSE ALL RULE CONFIGS ONCE TO AVOID PER ROW JSON PARSING
+        # WORK ON COPIES TO AVOID MUTATING CALLER RULE DICTS
         prepared_rules: list[dict] = []
         for rule in rules:
             prepared = dict(rule)
@@ -84,7 +82,7 @@ class RulesEngine:
                     prepared["_parsed_config"] = {}
             else:
                 prepared["_parsed_config"] = prepared.get("rule_config", {})
-            # PRE-COMPILE REGEX PATTERNS AND EXTENSION SETS FOR PERFORMANCE.
+            # PRE COMPILE REGEX PATTERNS AND EXTENSION SETS FOR PERFORMANCE
             config = prepared["_parsed_config"]
             if "patterns" in config:
                 prepared["_compiled_patterns"] = [
@@ -128,7 +126,7 @@ class RulesEngine:
         return matches
 
     def _rule_matches(self, row: ManifestRow, rule: dict) -> bool:
-        # CHECKS WHETHER A SINGLE RULE MATCHES A MANIFEST ROW BASED ON ITS TYPE AND CONFIG.
+        # CHECKS WHETHER A SINGLE RULE MATCHES A MANIFEST ROW BASED ON ITS TYPE AND CONFIG
         rule_type = rule.get("rule_type", "")
         config = rule.get("_parsed_config", {})
         if rule_type == "extension":
@@ -148,7 +146,7 @@ class RulesEngine:
         return False
 
     def _matches_extension(self, row: ManifestRow, rule: dict) -> bool:
-        # CHECKS WHETHER THE FILE EXTENSION IS IN THE RULE'S EXTENSION LIST.
+        # CHECKS WHETHER THE FILE EXTENSION IS IN THE RULE EXTENSION LIST
         allowed = rule.get("_compiled_extensions")
         if allowed is not None:
             return row.extension.lower() in allowed
@@ -156,7 +154,7 @@ class RulesEngine:
         return row.extension.lower() in {e.lower() for e in config.get("extensions", [])}
 
     def _matches_pattern(self, row: ManifestRow, rule: dict) -> bool:
-        # CHECKS WHETHER THE FILENAME MATCHES ANY OF THE RULE'S REGEX PATTERNS.
+        # CHECKS WHETHER THE FILENAME MATCHES ANY OF THE RULE REGEX PATTERNS
         compiled = rule.get("_compiled_patterns")
         filename = Path(row.path).name
         if compiled is not None:
@@ -166,12 +164,12 @@ class RulesEngine:
         return any(re.search(pattern, filename, re.IGNORECASE) for pattern in patterns)
 
     def _matches_date(self, row: ManifestRow, config: dict) -> bool:
-        # CHECKS WHETHER THE FILE'S MODIFICATION DATE FALLS WITHIN THE RULE'S DATE RANGE.
+        # CHECKS WHETHER THE FILE MODIFICATION DATE FALLS WITHIN THE RULE DATE RANGE
         if not row.modified_at:
             return False
         try:
             file_date = datetime.fromisoformat(row.modified_at)
-            # CONVERT TIMEZONE-AWARE DATES TO LOCAL TIME BEFORE STRIPPING TIMEZONE.
+            # CONVERT TIMEZONE AWARE DATES TO LOCAL TIME BEFORE STRIPPING TIMEZONE
             if file_date.tzinfo is not None:
                 file_date = file_date.astimezone().replace(tzinfo=None)
         except ValueError:
@@ -188,7 +186,7 @@ class RulesEngine:
         return True
 
     def _matches_size(self, row: ManifestRow, config: dict) -> bool:
-        # CHECKS WHETHER THE FILE SIZE FALLS WITHIN THE RULE'S MIN/MAX SIZE RANGE.
+        # CHECKS WHETHER THE FILE SIZE FALLS WITHIN THE RULE MIN MAX SIZE RANGE
         min_bytes = config.get("min_bytes") or 0
         max_bytes = config.get("max_bytes")
         if max_bytes is None or max_bytes == "":
@@ -196,7 +194,7 @@ class RulesEngine:
         return min_bytes <= row.size <= max_bytes
 
     def _matches_folder(self, row: ManifestRow, rule: dict) -> bool:
-        # CHECKS WHETHER THE FILE'S FOLDER PATH MATCHES ANY OF THE RULE'S FOLDER PATTERNS.
+        # CHECKS WHETHER THE FILE FOLDER PATH MATCHES ANY OF THE RULE FOLDER PATTERNS
         compiled = rule.get("_compiled_folders")
         if compiled is not None:
             return any(p.search(row.folder_path) for p in compiled)
@@ -208,11 +206,11 @@ class RulesEngine:
         )
 
     def _matches_status(self, row: ManifestRow, config: dict) -> bool:
-        # CHECKS WHETHER THE FILE'S STATUS MATCHES THE RULE'S REQUIRED STATUS VALUE.
+        # CHECKS WHETHER THE FILE STATUS MATCHES THE RULE REQUIRED STATUS VALUE
         return row.status == config.get("status", "")
 
     def _apply_rule(self, row: ManifestRow, rule: dict) -> RuleMatch | None:
-        # APPLIES A MATCHING RULE AND RETURNS A RuleMatch WITH THE PROPOSED DESTINATION PATH.
+        # APPLIES A MATCHING RULE AND RETURNS A RULE MATCH WITH THE PROPOSED DESTINATION PATH
         destination_template = rule.get("destination_template", "")
         if not destination_template:
             return None
@@ -227,7 +225,7 @@ class RulesEngine:
         )
 
     def _render_destination(self, row: ManifestRow, template: str) -> str:
-        # RENDERS A DESTINATION PATH TEMPLATE BY SUBSTITUTING FILE METADATA PLACEHOLDERS.
+        # RENDERS A DESTINATION PATH TEMPLATE BY SUBSTITUTING FILE METADATA PLACEHOLDERS
         filename = Path(row.path).name
         stem = Path(row.path).stem
         extension = row.extension
@@ -240,7 +238,7 @@ class RulesEngine:
         result = result.replace("{root}", self.scan_root)
         date_year = row.modified_at[:4] if row.modified_at and len(row.modified_at) >= 4 else "unknown"
         result = result.replace("{date_year}", date_year)
-        # PREVENT PATH TRAVERSAL: ENSURE THE RESULT STAYS WITHIN THE SCAN ROOT.
+        # PREVENT PATH TRAVERSAL: ENSURE THE RESULT STAYS WITHIN THE SCAN ROOT
         if self.scan_root:
             try:
                 resolved = Path(result).resolve()

@@ -17,11 +17,9 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Minimal valid file headers (bytes literals)
-# ---------------------------------------------------------------------------
+# MINIMAL VALID FILE HEADERS (BYTES LITERALS)
 
-# 1x1 white JPEG (SOI + APP0 + SOS + EOI)
+# 1X1 WHITE JPEG (SOI AND APP0 AND SOS AND EOI)
 JPEG_1X1 = (
     b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
     b"\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t"
@@ -34,7 +32,7 @@ JPEG_1X1 = (
     b"\xff\xd9"
 )
 
-# 1x1 white PNG (valid IHDR + IDAT + IEND)
+# 1X1 WHITE PNG (VALID IHDR AND IDAT AND IEND)
 def _make_png() -> bytes:
     import zlib
     def _chunk(chunk_type: bytes, data: bytes) -> bytes:
@@ -50,10 +48,10 @@ def _make_png() -> bytes:
 
 PNG_1X1 = _make_png()
 
-# 1x1 white BMP (14-byte file header + 40-byte DIB header + pixel data)
+# 1X1 WHITE BMP (14 BYTE FILE HEADER AND 40 BYTE DIB HEADER AND PIXEL DATA)
 BMP_1X1 = (
     b"BM"
-    + struct.pack("<I", 14 + 40 + 12)  # file size
+    + struct.pack("<I", 14 + 40 + 12)  # FILE SIZE
     + b"\x00\x00\x00\x00"
     + struct.pack("<I", 14 + 40)
     + struct.pack("<I", 40)
@@ -65,95 +63,93 @@ BMP_1X1 = (
     + b"\xff\xff\xff"
 )
 
-# 1x1 white TIFF (little-endian, baseline)
+# 1X1 WHITE TIFF (LITTLE ENDIAN, BASELINE)
 TIFF_1X1 = (
-    b"II"  # byte order
+    b"II"  # BYTE ORDER
     + struct.pack("<H", 42)
-    + struct.pack("<I", 8)  # IFD offset
-    + struct.pack("<H", 12)  # 12 entries
-    + struct.pack("<HHI", 256, 1, 1)  # ImageWidth
-    + struct.pack("<HHI", 257, 1, 1)  # ImageLength
-    + struct.pack("<HHI", 258, 1, 8)  # BitsPerSample
-    + struct.pack("<HHI", 259, 1, 1)  # Compression = None
-    + struct.pack("<HHI", 262, 1, 2)  # PhotometricInterpretation = RGB
-    + struct.pack("<HHI", 273, 1, 1)  # StripOffsets
-    + struct.pack("<HHI", 277, 1, 1)  # SamplesPerPixel
-    + struct.pack("<HHI", 278, 1, 1)  # RowsPerStrip
-    + struct.pack("<HHI", 279, 1, 3)  # StripByteCounts
-    + struct.pack("<HHI", 282, 1, 72)  # XResolution
-    + struct.pack("<HHI", 283, 1, 72)  # YResolution
-    + struct.pack("<HHI", 296, 1, 2)  # ResolutionUnit = inch
-    + struct.pack("<I", 0)  # next IFD offset (none)
-    + b"\xff\xff\xff"  # pixel data
+    + struct.pack("<I", 8)  # IFD OFFSET
+    + struct.pack("<H", 12)  # 12 ENTRIES
+    + struct.pack("<HHI", 256, 1, 1)  # IMAGE WIDTH
+    + struct.pack("<HHI", 257, 1, 1)  # IMAGE LENGTH
+    + struct.pack("<HHI", 258, 1, 8)  # BITS PER SAMPLE
+    + struct.pack("<HHI", 259, 1, 1)  # COMPRESSION NONE
+    + struct.pack("<HHI", 262, 1, 2)  # PHOTOMETRIC INTERPRETATION RGB
+    + struct.pack("<HHI", 273, 1, 1)  # STRIP OFFSETS
+    + struct.pack("<HHI", 277, 1, 1)  # SAMPLES PER PIXEL
+    + struct.pack("<HHI", 278, 1, 1)  # ROWS PER STRIP
+    + struct.pack("<HHI", 279, 1, 3)  # STRIP BYTE COUNTS
+    + struct.pack("<HHI", 282, 1, 72)  # X RESOLUTION
+    + struct.pack("<HHI", 283, 1, 72)  # Y RESOLUTION
+    + struct.pack("<HHI", 296, 1, 2)  # RESOLUTION UNIT INCH
+    + struct.pack("<I", 0)  # NEXT IFD OFFSET (NONE)
+    + b"\xff\xff\xff"  # PIXEL DATA
 )
 
-# Minimal valid MP3 frame (ID3v2 header + one valid frame)
+# MINIMAL VALID MP3 FRAME (ID3V2 HEADER AND ONE VALID FRAME)
 MP3_1X1 = (
     b"ID3"
-    + b"\x03\x00"  # version 2.3
-    + b"\x00"  # flags
-    + b"\x00\x00\x00\x00"  # size (syncsafe int, 0)
-    + b"\xff\xfb\x90\x00"  # MPEG1 Layer3 valid frame header
-    + b"\x00" * 413  # frame data padding
+    + b"\x03\x00"  # VERSION 2.3
+    + b"\x00"  # FLAGS
+    + b"\x00\x00\x00\x00"  # SIZE (SYNCSAFE INT, 0)
+    + b"\xff\xfb\x90\x00"  # MPEG1 LAYER3 VALID FRAME HEADER
+    + b"\x00" * 413  # FRAME DATA PADDING
 )
 
-# Minimal valid WAV header
+# MINIMAL VALID WAV HEADER
 WAV_HEADER = (
     b"RIFF"
-    + struct.pack("<I", 36 + 4)  # file size - 8
+    + struct.pack("<I", 36 + 4)  # FILE SIZE MINUS 8
     + b"WAVE"
     + b"fmt "
-    + struct.pack("<I", 16)  # chunk size
-    + struct.pack("<HHIIHH", 1, 1, 44100, 88200, 2, 16)  # PCM, mono, 44100Hz
+    + struct.pack("<I", 16)  # CHUNK SIZE
+    + struct.pack("<HHIIHH", 1, 1, 44100, 88200, 2, 16)  # PCM, MONO, 44100 HZ
     + b"data"
-    + struct.pack("<I", 4)  # data size
-    + b"\x00\x00\x00\x00"  # 1 sample of silence
+    + struct.pack("<I", 4)  # DATA SIZE
+    + b"\x00\x00\x00\x00"  # ONE SAMPLE OF SILENCE
 )
 
-# Minimal valid FLAC header
+# MINIMAL VALID FLAC HEADER
 FLAC_HEADER = (
     b"fLaC"
-    + b"\x00"  # metadata block: STREAMINFO
-    + b"\x00\x00\x22"  # block size 34 bytes
-    + b"\x00\x00"  # min block size
-    + b"\x00\x00"  # max block size
-    + b"\x00\x00\x00"  # min frame size
-    + b"\x00\x00\x00"  # max frame size
-    + b"\xac\x44"  # sample rate 44100 (20 bits) + channels (3 bits) + bits (5 bits)
-    + b"\x00\x00\x00\x00\x00\x00"  # total samples + MD5
+    + b"\x00"  # METADATA BLOCK STREAMINFO
+    + b"\x00\x00\x22"  # BLOCK SIZE 34 BYTES
+    + b"\x00\x00"  # MIN BLOCK SIZE
+    + b"\x00\x00"  # MAX BLOCK SIZE
+    + b"\x00\x00\x00"  # MIN FRAME SIZE
+    + b"\x00\x00\x00"  # MAX FRAME SIZE
+    + b"\xac\x44"  # SAMPLE RATE 44100 (20 BITS) AND CHANNELS (3 BITS) AND BITS (5 BITS)
+    + b"\x00\x00\x00\x00\x00\x00"  # TOTAL SAMPLES AND MD5
 )
 
-# Minimal valid MP4 (ftyp box)
+# MINIMAL VALID MP4 (FTYP BOX)
 MP4_HEADER = (
-    b"\x00\x00\x00\x14ftypisom"  # ftyp box (20 bytes)
+    b"\x00\x00\x00\x14ftypisom"  # FTYP BOX (20 BYTES)
     + b"isom"
     + b"iso2"
     + b"mp41"
 )
 
-# Minimal valid MKV (EBML header)
+# MINIMAL VALID MKV (EBML HEADER)
 MKV_HEADER = (
-    b"\x1a\x45\xdf\xa3"  # EBML magic
-    + b"\x01\x00\x00\x00\x00\x00\x00\x0f"  # EBML header element
-    + b"\x42\x86\x81\x01"  # EBMLVersion = 1
-    + b"\x42\x87\x81\x04"  # EBMLReadVersion = 4
-    + b"\x42\x85\x81\x02"  # EBMLMaxIDLength = 2
-    + b"\x42\x83\x81\x08"  # EBMLMaxSizeLength = 8
+    b"\x1a\x45\xdf\xa3"  # EBML MAGIC
+    + b"\x01\x00\x00\x00\x00\x00\x00\x0f"  # EBML HEADER ELEMENT
+    + b"\x42\x86\x81\x01"  # EBML VERSION 1
+    + b"\x42\x87\x81\x04"  # EBML READ VERSION 4
+    + b"\x42\x85\x81\x02"  # EBML MAX ID LENGTH 2
+    + b"\x42\x83\x81\x08"  # EBML MAX SIZE LENGTH 8
 )
 
-# Fake EXE (MZ header + PE header)
+# FAKE EXE (MZ HEADER AND PE HEADER)
 EXE_HEADER = b"MZ" + b"\x00" * 58 + struct.pack("<I", 64) + b"PE\x00\x00" + b"\x00" * 20
 
-# Fake DMG header
+# FAKE DMG HEADER
 DMG_HEADER = b"koly" + b"\x00" * 508 + struct.pack("<I", 512)
 
-# Fake DEB header (ar format)
+# FAKE DEB HEADER (AR FORMAT)
 DEB_HEADER = b"!<arch>\n" + b"debian-binary   " + b"17000000000\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x30\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x60\x00"
 
 
-# ---------------------------------------------------------------------------
-# Content generators
-# ---------------------------------------------------------------------------
+# CONTENT GENERATORS
 
 def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
@@ -162,12 +158,12 @@ def _write_text(path: Path, content: str) -> None:
 def _create_documents(folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
 
-    # PDF with readable text using pypdf
+# PDF WITH READABLE TEXT USING PYPDF
     try:
         from pypdf import PdfWriter
         writer = PdfWriter()
         writer.add_blank_page(width=612, height=792)
-        # Add annotations with text content
+        # ADD ANNOTATIONS WITH TEXT CONTENT
         from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, TextStringObject
         annot = DictionaryObject()
         annot[NameObject("/Type")] = NameObject("/Annot")
@@ -186,7 +182,7 @@ def _create_documents(folder: Path) -> None:
         buf.seek(0)
         (folder / "invoice_march_2024.pdf").write_bytes(buf.read())
     except ImportError:
-        # Fallback: write a text file with .pdf extension
+        # FALLBACK: WRITE A TEXT FILE WITH .PDF EXTENSION
         _write_text(
             folder / "invoice_march_2024.pdf",
             "Invoice #INV-2024-0315\nDate: March 15, 2024\n"
@@ -194,7 +190,7 @@ def _create_documents(folder: Path) -> None:
             "Description: Quarterly consulting services\nPayment terms: Net 30",
         )
 
-    # DOCX with real paragraphs
+    # DOCX WITH REAL PARAGRAPHS
     try:
         from docx import Document
         doc = Document()
@@ -221,7 +217,7 @@ def _create_documents(folder: Path) -> None:
             "4. Rules-based organization\n5. Transaction journal with undo",
         )
 
-    # XLSX with data
+    # XLSX WITH DATA
     try:
         from openpyxl import Workbook
         wb = Workbook()
@@ -294,7 +290,7 @@ def _create_documents(folder: Path) -> None:
 def _create_photos(folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "IMG_20240315_142322.jpg").write_bytes(JPEG_1X1)
-    (folder / "IMG_20240315_142322 (1).jpg").write_bytes(JPEG_1X1)  # duplicate
+    (folder / "IMG_20240315_142322 (1).jpg").write_bytes(JPEG_1X1)      # DUPLICATE
     (folder / "vacation_beach.png").write_bytes(PNG_1X1)
     (folder / "screenshot_2024_01_10.png").write_bytes(PNG_1X1)
     (folder / "family_photo.tiff").write_bytes(TIFF_1X1)
@@ -461,17 +457,17 @@ def _create_videos(folder: Path) -> None:
 def _create_archives(folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
 
-    # Real ZIP with a file inside
+    # REAL ZIP WITH A FILE INSIDE
     zip_path = folder / "project_backup.zip"
     with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("backup/readme.txt", "This is a backup of the project files.\nCreated: March 2024.\n")
         zf.writestr("backup/config.json", '{"backup": true, "date": "2024-03-15"}\n')
         zf.writestr("backup/notes.txt", "Remember to verify all files after restore.\n")
 
-    # Fake RAR header
+    # FAKE RAR HEADER
     (folder / "old_photos.rar").write_bytes(b"Rar!\x1a\x07\x00" + b"\x00" * 500)
 
-    # Real tar.gz with a file inside
+    # REAL TAR.GZ WITH A FILE INSIDE
     tar_path = folder / "source_code.tar.gz"
     with tarfile.open(str(tar_path), "w:gz") as tar:
         info = tarfile.TarInfo(name="project/main.py")
@@ -495,7 +491,7 @@ def _create_installers(folder: Path) -> None:
 def _create_downloads(folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
 
-    # Another PDF
+    # ANOTHER PDF
     try:
         from pypdf import PdfWriter
         writer = PdfWriter()
@@ -521,7 +517,7 @@ def _create_downloads(folder: Path) -> None:
 
 
 def _create_protected_folders(root: Path) -> None:
-    # node_modules (should be auto-excluded)
+    # NODE_MODULES (SHOULD BE AUTO EXCLUDED)
     nm = root / "node_modules" / "some_package"
     nm.mkdir(parents=True, exist_ok=True)
     _write_text(
@@ -535,7 +531,7 @@ def _create_protected_folders(root: Path) -> None:
     )
     _write_text(nm / "package.json", '{"name": "some-package", "version": "1.0.0"}\n')
 
-    # .git (should be auto-excluded)
+    # .GIT (SHOULD BE AUTO EXCLUDED)
     git_dir = root / ".git"
     git_dir.mkdir(parents=True, exist_ok=True)
     _write_text(
@@ -551,7 +547,7 @@ def _create_protected_folders(root: Path) -> None:
     )
     _write_text(git_dir / "HEAD", "ref: refs/heads/main\n")
 
-    # venv (should be auto-excluded)
+    # VENV (SHOULD BE AUTO EXCLUDED)
     venv_dir = root / "venv" / "Lib" / "site-packages"
     venv_dir.mkdir(parents=True, exist_ok=True)
     _write_text(venv_dir / "__init__.py", "# Virtual environment packages\n")
@@ -571,7 +567,7 @@ def _create_duplicates(root: Path) -> None:
 
 
 def _create_old_files(root: Path) -> None:
-    # Create old DOCX
+    # CREATE OLD DOCX
     try:
         from docx import Document
         doc = Document()
@@ -587,7 +583,7 @@ def _create_old_files(root: Path) -> None:
             "Old Report 2022\n\nThis is an old report from 2022.",
         )
 
-    # Create old CSV
+    # CREATE OLD CSV
     _write_text(
         root / "legacy_data_2021.csv",
         "ID,Date,Amount,Description\n"
@@ -598,7 +594,7 @@ def _create_old_files(root: Path) -> None:
         "5,2021-12-20,3200.00,Hardware upgrade\n",
     )
 
-    # Set file timestamps to 2022 and 2021
+    # SET FILE TIMESTAMPS TO 2022 AND 2021
     old_time_2022 = datetime(2022, 6, 15, 10, 30, 0).timestamp()
     old_time_2021 = datetime(2021, 11, 1, 14, 0, 0).timestamp()
     os.utime(str(root / "old_report_2022.docx"), (old_time_2022, old_time_2022))
@@ -606,25 +602,23 @@ def _create_old_files(root: Path) -> None:
 
 
 def _create_edge_cases(root: Path) -> None:
-    # Random binary data
+    # RANDOM BINARY DATA
     (root / "mixed_file.bin").write_bytes(bytes(range(256)) * 4)
 
-    # File with spaces and special characters in name
+    # FILE WITH SPACES AND SPECIAL CHARACTERS IN NAME
     _write_text(root / "file with spaces.txt", "This file has spaces in its name.\n")
 
-    # File with unicode characters
+    # FILE WITH UNICODE CHARACTERS
     _write_text(root / "unicode_日本語.txt", "This file contains unicode: 日本語テスト\n")
 
-    # Very long filename (but within OS limits)
+    # VERY LONG FILENAME (BUT WITHIN OS LIMITS)
     _write_text(root / ("a" * 100 + ".txt"), "File with very long name.\n")
 
-    # Empty file
+    # EMPTY FILE
     (root / "empty_file.txt").write_bytes(b"")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+# MAIN
 
 def create_test_data(root: Path = Path("D:/test-data")) -> None:
     """Create the full test data structure."""
@@ -670,7 +664,7 @@ def create_test_data(root: Path = Path("D:/test-data")) -> None:
     _create_edge_cases(root)
     print("  [+] Edge cases (binary, spaces, unicode, long name, empty)")
 
-    # Count total files
+    # COUNT TOTAL FILES
     total = sum(1 for _ in root.rglob("*") if _.is_file())
     print(f"\nDone! {total} files created across {len(list(root.iterdir()))} top-level folders.")
     print(f"Point the app at: {root}")

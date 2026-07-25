@@ -36,7 +36,7 @@ class FileAudit(Base):
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="scanned")
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
-    # STAGE 2: EXTENDED COLUMNS FOR RULE MATCHING AND FOLDER DISPLAY.
+    # STAGE 2: EXTENDED COLUMNS FOR RULE MATCHING AND FOLDER DISPLAY
     relative_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     extension: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     modified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -50,7 +50,7 @@ class NamingHistory(Base):
     suggested_title: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     source_path: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
-    # STAGE 2: SCOPE TITLES PER SCAN PROFILE.
+    # STAGE 2: SCOPE TITLES PER SCAN PROFILE
     scan_profile_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("scan_profiles.id"), nullable=True)
 
 
@@ -60,7 +60,7 @@ class ScanProfile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     root_path: Mapped[str] = mapped_column(Text, default="")
-    # STAGE 2: JSON ARRAYS FOR FOLDER INCLUSION/EXCLUSION LISTS.
+    # STAGE 2: JSON ARRAYS FOR FOLDER INCLUSION EXCLUSION LISTS
     included_folders: Mapped[str] = mapped_column(Text, default="[]")
     excluded_folders: Mapped[str] = mapped_column(Text, default="[]")
     custom_protected_patterns: Mapped[str] = mapped_column(Text, default="[]")
@@ -75,7 +75,7 @@ class FolderClassification(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     scan_profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("scan_profiles.id"))
     folder_path: Mapped[str] = mapped_column(Text, index=True)
-    # STAGE 2: CLASSIFICATION TYPE, RECOMMENDED ACTION, AND USER OVERRIDE.
+    # STAGE 2: CLASSIFICATION TYPE, RECOMMENDED ACTION, AND USER OVERRIDE
     classification: Mapped[str] = mapped_column(String(32))
     recommended_action: Mapped[str] = mapped_column(String(16))
     reason: Mapped[str] = mapped_column(Text, default="")
@@ -90,7 +90,7 @@ class OrganizationRule(Base):
     scan_profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("scan_profiles.id"))
     name: Mapped[str] = mapped_column(String(255))
     rule_type: Mapped[str] = mapped_column(String(32))
-    # STAGE 2: JSON CONFIG FOR TYPE-SPECIFIC RULE PARAMETERS.
+    # STAGE 2: JSON CONFIG FOR TYPE SPECIFIC RULE PARAMETERS
     rule_config: Mapped[str] = mapped_column(Text, default="{}")
     destination_template: Mapped[str] = mapped_column(Text, default="")
     priority: Mapped[int] = mapped_column(Integer, default=0)

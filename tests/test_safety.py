@@ -46,7 +46,7 @@ class SafetyTests(unittest.TestCase):
         self.assertFalse(is_protected(test_path, []))
 
     def test_windows_platform_patterns_work(self):
-        # VERIFIES THAT WINDOWS-SPECIFIC PROTECTED FOLDER PATTERNS ARE DETECTED.
+        # VERIFIES THAT WINDOWS SPECIFIC PROTECTED FOLDER PATTERNS ARE DETECTED.
         windows_patterns = [r"^\$RECYCLE\.BIN$", r"^System Volume Information$", r"^Windows$", r"^Program Files(?: \(x86\))?$"]
         recycle_path = Path("$RECYCLE.BIN") / "file.txt"
         system_path = Path("System Volume Information") / "catalog.xml"
@@ -60,7 +60,7 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(is_protected(program_files_x86_path, windows_patterns))
 
     def test_macos_platform_patterns_work(self):
-        # VERIFIES THAT MACOS-SPECIFIC PROTECTED FOLDER PATTERNS ARE DETECTED.
+        # VERIFIES THAT MACOS SPECIFIC PROTECTED FOLDER PATTERNS ARE DETECTED.
         macos_patterns = [r"^\.Trashes$", r"^\.Spotlight-V100$", r"^\.fseventsd$", r"^System$"]
         trash_path = Path(".Trashes") / "501" / "file.txt"
         spotlight_path = Path(".Spotlight-V100") / "store.db"
@@ -72,7 +72,7 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(is_protected(system_path, macos_patterns))
 
     def test_linux_platform_patterns_work(self):
-        # VERIFIES THAT LINUX-SPECIFIC PROTECTED FOLDER PATTERNS ARE DETECTED.
+        # VERIFIES THAT LINUX SPECIFIC PROTECTED FOLDER PATTERNS ARE DETECTED.
         linux_patterns = [r"^proc$", r"^sys$", r"^dev$", r"^run$", r"^lost\+found$"]
         proc_path = Path("proc") / "cpuinfo"
         sys_path = Path("sys") / "kernel" / "file"
@@ -86,7 +86,7 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(is_protected(lost_path, linux_patterns))
 
     def test_single_part_path_is_checked(self):
-        # VERIFIES THAT A SINGLE-PART PATH (JUST A FOLDER NAME) IS CHECKED CORRECTLY.
+        # VERIFIES THAT A SINGLE PART PATH (JUST A FOLDER NAME) IS CHECKED CORRECTLY.
         self.assertTrue(is_protected(Path(".opencoeus"), [r"^\.opencoeus$"]))
         self.assertFalse(is_protected(Path("Documents"), [r"^\.opencoeus$"]))
 

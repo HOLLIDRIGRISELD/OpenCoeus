@@ -12,7 +12,7 @@ class AuditStoreRecordTests(unittest.TestCase):
             database_path = Path(temporary_directory) / "test.sqlite3"
             store = AuditStore(f"sqlite:///{database_path.as_posix()}")
             store.record_file("/test/file.txt", 1024, "abc123", "unique")
-            # RECORDDING SHOULD NOT RAISE ANY ERRORS.
+            # RECORDING SHOULD NOT RAISE ANY ERRORS.
             store.close()
 
     def test_updates_existing_file_record(self):
@@ -46,7 +46,7 @@ class AuditStoreRecordTests(unittest.TestCase):
 
 class AuditStoreReserveTitleTests(unittest.TestCase):
     def test_reserves_unique_title(self):
-        # VERIFIES THAT A TITLE NOT ALREADY IN THE DATABASE IS RESERVED AS-IS.
+        # VERIFIES THAT A TITLE NOT ALREADY IN THE DATABASE IS RESERVED AS IS.
         with tempfile.TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "test.sqlite3"
             store = AuditStore(f"sqlite:///{database_path.as_posix()}")
@@ -110,7 +110,7 @@ class AuditStoreCloseTests(unittest.TestCase):
             database_path = Path(temporary_directory) / "test.sqlite3"
             store = AuditStore(f"sqlite:///{database_path.as_posix()}")
             store.close()
-            # DOUBLE-CLOSE SHOULD NOT RAISE.
+            # DOUBLE CLOSE SHOULD NOT RAISE.
             store.close()
 
 

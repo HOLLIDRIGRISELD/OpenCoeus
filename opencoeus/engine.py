@@ -27,7 +27,7 @@ class ManifestRow:
     status: str
     duplicate_of: str = ""
     suggested_title: str = ""
-    # STAGE 2: EXTENDED METADATA FOR RULE-BASED ORGANIZATION.
+    # STAGE 2: EXTENDED METADATA FOR RULE-BASED ORGANIZATION
     relative_path: str = ""
     extension: str = ""
     modified_at: str = ""
@@ -38,7 +38,7 @@ class ManifestRow:
 class ScanResult:
     rows: list[ManifestRow] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    # STAGE 2: FOLDER TREE AND CLASSIFICATION DATA FOR THE UI.
+    # STAGE 2: FOLDER TREE AND CLASSIFICATION DATA FOR THE UI
     folder_tree_flat: list[dict] = field(default_factory=list)
     classifications: list[dict] = field(default_factory=list)
 
@@ -52,7 +52,7 @@ class ScanEngine:
         self.settings, self.store = settings, store or AuditStore()
 
     def run(self, progress_callback: Callable[[str], None] | None = None) -> ScanResult:
-        # BACKWARD-COMPATIBLE SINGLE-PHASE SCAN FOR STAGE 1 CLI.
+        # BACKWARD-COMPATIBLE SINGLE-PHASE SCAN FOR STAGE 1 CLI
         scan_result = ScanResult()
         self._scan_files(scan_result, progress_callback)
         return scan_result
@@ -60,7 +60,7 @@ class ScanEngine:
     def run_phase_one(self, progress_callback: Callable[[str], None] | None = None,
                       custom_patterns: list[str] | None = None,
                       profile_id: int = 1) -> ScanResult:
-        # PHASE 1: DISCOVERS THE FOLDER TREE AND CLASSIFIES EVERY FOLDER.
+        # PHASE 1: DISCOVERS THE FOLDER TREE AND CLASSIFIES EVERY FOLDER
         scan_result = ScanResult()
         logger.info("Phase 1: scanning %s", self.settings.root)
         merged_patterns = self.settings.protected_patterns + (custom_patterns or [])
@@ -79,7 +79,7 @@ class ScanEngine:
                       progress_callback: Callable[[str], None] | None = None,
                       included_folders: list[str] | None = None,
                       extract_documents: bool | None = None) -> ScanResult:
-        # PHASE 2: SCANS FILES WITHIN NON-EXCLUDED FOLDERS AND DETECTS DUPLICATES.
+        # PHASE 2: SCANS FILES WITHIN NON-EXCLUDED FOLDERS AND DETECTS DUPLICATES
         scan_result = ScanResult()
         logger.info("Phase 2: scanning files in %s", self.settings.root)
         effective_extract = extract_documents if extract_documents is not None else self.settings.extract_documents
@@ -91,15 +91,15 @@ class ScanEngine:
                     excluded_folders: set[str] | None = None,
                     included_folders: list[str] | None = None,
                     extract_documents: bool | None = None) -> None:
-        # SHARED FILE SCANNING LOGIC USED BY BOTH run() AND run_phase_two().
+        # SHARED FILE SCANNING LOGIC USED BY BOTH run() AND run_phase_two()
         discovered_files: list[FileRecord] = list(iter_files(self.settings.root, scan_result.errors.append))
-        # FILTER IN-PLACE TO AVOID CREATING EXTRA LIST COPIES.
+        # FILTER IN-PLACE TO AVOID CREATING EXTRA LIST COPIES
         if excluded_folders:
             discovered_files = [f for f in discovered_files if not self._is_in_excluded_folder(f, excluded_folders)]
         if included_folders:
             discovered_files = [f for f in discovered_files if self._is_in_included_folder(f, included_folders)]
         use_extraction = extract_documents if extract_documents is not None else self.settings.extract_documents
-        # GROUP BY SIZE IN SINGLE PASS FOR DUPLICATE DETECTION.
+        # GROUP BY SIZE IN SINGLE PASS FOR DUPLICATE DETECTION
         files_grouped_by_size: dict[int, list[FileRecord]] = defaultdict(list)
         for file_record in discovered_files:
             files_grouped_by_size[file_record.size].append(file_record)
@@ -150,7 +150,7 @@ class ScanEngine:
         self.store.record_files_batch(batch_records)
 
     def _is_in_excluded_folder(self, file_record: FileRecord, excluded_folders: set[str]) -> bool:
-        # CHECKS WHETHER A FILE'S FOLDER PATH MATCHES ANY EXCLUDED FOLDER.
+        # CHECKS WHETHER A FILE FOLDER PATH MATCHES ANY EXCLUDED FOLDER
         normalized = file_record.folder_path.replace("\\", "/")
         for excluded_folder in excluded_folders:
             excluded_normalized = excluded_folder.replace("\\", "/").rstrip("/") 
@@ -159,7 +159,7 @@ class ScanEngine:
         return False
 
     def _is_in_included_folder(self, file_record: FileRecord, included_folders: list[str]) -> bool:
-        # CHECKS WHETHER A FILE'S FOLDER PATH MATCHES ANY INCLUDED FOLDER.
+        # CHECKS WHETHER A FILE FOLDER PATH MATCHES ANY INCLUDED FOLDER
         normalized = file_record.folder_path.replace("\\", "/")
         for included_folder in included_folders:
             included_normalized = included_folder.replace("\\", "/").rstrip("/") 
@@ -169,7 +169,7 @@ class ScanEngine:
 
 
 def write_manifest(scan_result: ScanResult, destination_path: Path) -> None:
-    # WRITES REVIEWABLE RESULTS TO CSV WITHOUT CHANGING ANY SCANNED FILE.
+    # WRITES REVIEWABLE RESULTS TO CSV WITHOUT CHANGING ANY SCANNED FILE
     with destination_path.open("w", newline="", encoding="utf-8-sig") as csv_output_file:
         csv_writer = csv.DictWriter(csv_output_file, fieldnames=[
             "path", "size", "sha256", "status", "duplicate_of", "suggested_title",

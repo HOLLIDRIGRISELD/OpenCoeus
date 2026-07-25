@@ -23,14 +23,14 @@ def main() -> int:
     command_parser = argparse.ArgumentParser(description="OpenCoeus offline scan and organization (never modifies files without approval).")
     command_subparsers = command_parser.add_subparsers(dest="command", required=True)
 
-    # SCAN COMMAND: THE ORIGINAL STAGE 1 NON-DESTRUCTIVE AUDIT.
+    # SCAN COMMAND: THE ORIGINAL STAGE 1 NON DESTRUCTIVE AUDIT
     scan_command = command_subparsers.add_parser("scan", help="Create a non-destructive audit manifest.")
     scan_command.add_argument("folder", type=Path)
     scan_command.add_argument("--output", type=Path, default=Path("opencoeus-manifest.csv"))
     scan_command.add_argument("--no-document-text", action="store_true")
     scan_command.add_argument("--profile", type=str, default=None, help="Scan profile name to apply settings from.")
 
-    # PROFILE COMMAND: MANAGE SCAN PROFILES.
+    # PROFILE COMMAND: MANAGE SCAN PROFILES
     profile_command = command_subparsers.add_parser("profile", help="Manage scan profiles.")
     profile_subparsers = profile_command.add_subparsers(dest="profile_action", required=True)
     profile_list_cmd = profile_subparsers.add_parser("list", help="List all saved profiles.")
@@ -42,13 +42,13 @@ def main() -> int:
     profile_show_cmd = profile_subparsers.add_parser("show", help="Show profile details.")
     profile_show_cmd.add_argument("name", type=str, help="Profile name to show.")
 
-    # CLASSIFY COMMAND: RUN PHASE ONE FOLDER CLASSIFICATION.
+    # CLASSIFY COMMAND: RUN PHASE ONE FOLDER CLASSIFICATION
     classify_command = command_subparsers.add_parser("classify", help="Classify folders in a directory tree.")
     classify_command.add_argument("folder", type=Path)
     classify_command.add_argument("--output", type=Path, default=None, help="Save classifications to JSON file.")
     classify_command.add_argument("--max-depth", type=int, default=5, help="Maximum folder tree depth.")
 
-    # ORGANIZE COMMAND: RUN RULES ENGINE AND PROPOSE FILE ACTIONS.
+    # ORGANIZE COMMAND: RUN RULES ENGINE AND PROPOSE FILE ACTIONS
     organize_command = command_subparsers.add_parser("organize", help="Propose file organization actions using rules.")
     organize_command.add_argument("folder", type=Path)
     organize_command.add_argument("--output", type=Path, default=Path("opencoeus-actions.csv"))
@@ -56,12 +56,12 @@ def main() -> int:
     organize_command.add_argument("--profile", type=str, default=None, help="Profile name to use for rules.")
     organize_command.add_argument("--rules-file", type=Path, default=None, help="JSON file with rule definitions.")
 
-    # EXECUTE COMMAND: EXECUTE APPROVED FILE ACTIONS.
+    # EXECUTE COMMAND: EXECUTE APPROVED FILE ACTIONS
     execute_command = command_subparsers.add_parser("execute", help="Execute approved file organization actions.")
     execute_command.add_argument("--profile", type=str, default=None, help="Profile name to execute actions for.")
     execute_command.add_argument("--dry-run", action="store_true", help="Show what would be done without executing.")
 
-    # UNDO COMMAND: UNDO THE LAST EXECUTED BATCH.
+    # UNDO COMMAND: UNDO THE LAST EXECUTED BATCH
     undo_command = command_subparsers.add_parser("undo", help="Undo the last executed batch of file moves.")
     undo_command.add_argument("--profile", type=str, default=None, help="Profile name to undo actions for.")
 
@@ -89,7 +89,7 @@ def _run_scan(args) -> int:
     extract_documents = not args.no_document_text
     store = AuditStore()
     try:
-        # LOAD PROFILE IF SPECIFIED AND APPLY ITS SETTINGS.
+        # LOAD PROFILE IF SPECIFIED AND APPLY ITS SETTINGS
         profile = ProfileConfig()
         if args.profile:
             loaded = load_profile_by_name(store, args.profile)
@@ -104,7 +104,7 @@ def _run_scan(args) -> int:
                 if not loaded.document_extraction:
                     extract_documents = False
         settings = ScanSettings(args.folder, extract_documents=extract_documents)
-        # USE PHASE TWO PIPELINE IF PROFILE HAS EXCLUSIONS, OTHERWISE SINGLE-PHASE SCAN.
+        # USE PHASE TWO PIPELINE IF PROFILE HAS EXCLUSIONS, OTHERWISE SINGLE PHASE SCAN
         excluded_folders = set(profile.excluded_folders) if profile.excluded_folders else None
         if excluded_folders:
             scan_engine = ScanEngine(settings, store)
@@ -188,7 +188,7 @@ def _run_organize(args) -> int:
     settings = ScanSettings(args.folder, extract_documents=extract_documents)
     store = AuditStore()
     try:
-        # LOAD PROFILE IF SPECIFIED.
+        # LOAD PROFILE IF SPECIFIED
         profile = ProfileConfig()
         if args.profile:
             loaded = load_profile_by_name(store, args.profile)
@@ -197,14 +197,14 @@ def _run_organize(args) -> int:
             else:
                 profile = loaded
 
-        # LOAD RULES FROM FILE OR USE DEFAULTS.
+        # LOAD RULES FROM FILE OR USE DEFAULTS
         rules = list(DEFAULT_RULES)
         if args.rules_file and args.rules_file.is_file():
             with args.rules_file.open(encoding="utf-8") as rules_json:
                 rules = json.load(rules_json)
             print(f"Loaded {len(rules)} rules from {args.rules_file}")
 
-        # PHASE 1: CLASSIFY FOLDERS.
+        # PHASE 1: CLASSIFY FOLDERS
         print("Phase 1: Classifying folders...")
         tree = build_folder_tree(args.folder, settings.protected_patterns)
         classifications = classify_tree(tree, profile.custom_protected_patterns or None)
@@ -214,13 +214,13 @@ def _run_organize(args) -> int:
         }
         print(f"  Excluded {len(excluded_folders)} folders automatically.")
 
-        # PHASE 2: SCAN FILES WITH EXCLUSIONS AND APPLY RULES.
+        # PHASE 2: SCAN FILES WITH EXCLUSIONS AND APPLY RULES
         print("Phase 2: Scanning files...")
         scan_engine = ScanEngine(settings, store)
         scan_result = scan_engine.run_phase_two(excluded_folders, print)
         print(f"  Scanned {len(scan_result.rows)} files, found {scan_result.duplicate_count} duplicates.")
 
-        # APPLY RULES ENGINE.
+        # APPLY RULES ENGINE
         rules_engine = RulesEngine(profile, scan_root=settings.root.as_posix())
         matches = rules_engine.evaluate(scan_result.rows, rules)
 
@@ -255,7 +255,7 @@ def _run_organize(args) -> int:
 def _run_execute(args) -> int:
     store = AuditStore()
     try:
-        # DETERMINE PROFILE ID.
+        # DETERMINE PROFILE ID
         profile_id = None
         if args.profile:
             loaded = load_profile_by_name(store, args.profile)
@@ -263,7 +263,7 @@ def _run_execute(args) -> int:
                 print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
                 return 1
             profile_id = loaded.profile_id
-        # CHECK FOR APPROVED ACTIONS.
+        # CHECK FOR APPROVED ACTIONS
         actions = store.get_proposed_actions(profile_id or 1)
         approved = [a for a in actions if a.approved]
         if not approved:
@@ -276,7 +276,7 @@ def _run_execute(args) -> int:
                 print(f"         -> {action.proposed_path}")
             print("\nDry run complete. No files were moved.")
             return 0
-        # PREPARE AND EXECUTE.
+        # PREPARE AND EXECUTE
         from .journal import prepare_execution, run_execution
         batch_id, count = prepare_execution(store, profile_id or 1, f"{len(approved)} file moves via CLI")
         if batch_id == 0:
@@ -298,7 +298,7 @@ def _run_execute(args) -> int:
 def _run_undo(args) -> int:
     store = AuditStore()
     try:
-        # DETERMINE PROFILE ID.
+        # DETERMINE PROFILE ID
         profile_id = None
         if args.profile:
             loaded = load_profile_by_name(store, args.profile)
@@ -306,7 +306,7 @@ def _run_undo(args) -> int:
                 print(f"Error: Profile '{args.profile}' not found.", file=sys.stderr)
                 return 1
             profile_id = loaded.profile_id
-        # FIND LATEST COMPLETED BATCH.
+        # FIND LATEST COMPLETED BATCH
         from .journal import undo_last_batch
         batch_id, errors = undo_last_batch(store, profile_id)
         if batch_id is None:

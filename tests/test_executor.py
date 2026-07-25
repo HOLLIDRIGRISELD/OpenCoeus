@@ -342,7 +342,7 @@ class CleanupEmptyFoldersTests(unittest.TestCase):
             self.assertTrue((root / ".opencoeus").exists())
 
     def test_cleans_nested_empty_folders_bottom_up(self):
-        # VERIFIES THAT NESTED EMPTY FOLDERS ARE CLEANED BOTTOM-UP (CHILDREN BEFORE PARENTS).
+        # VERIFIES THAT NESTED EMPTY FOLDERS ARE CLEANED BOTTOM UP (CHILDREN BEFORE PARENTS).
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             parent = root / "parent"
@@ -418,7 +418,7 @@ class ExecuteBatchTests(unittest.TestCase):
                 executor_mod.HOLDING_ROOT = original
 
     def test_execute_batch_missing_source(self):
-        # VERIFIES PRE-FLIGHT DETECTS MISSING SOURCE FILE AND MARKS ENTRY FAILED.
+        # VERIFIES PRE FLIGHT DETECTS MISSING SOURCE FILE AND MARKS ENTRY FAILED.
         import opencoeus.executor as executor_mod
         original = executor_mod.HOLDING_ROOT
         with tempfile.TemporaryDirectory() as tmp:
@@ -691,7 +691,7 @@ class EndToEndExecuteUndoRoundTripTests(unittest.TestCase):
                 executor_mod.HOLDING_ROOT = original
 
     def test_undo_after_partial_failure(self):
-        # ONE FILE MISSING AT DESTINATION — UNDO HANDLES IT AND RETURNS ERROR.
+        # ONE FILE MISSING AT DESTINATION AND UNDO HANDLES IT AND RETURNS ERROR.
         import opencoeus.executor as executor_mod
         original = executor_mod.HOLDING_ROOT
         with tempfile.TemporaryDirectory() as tmp:
@@ -726,7 +726,7 @@ class PartialRollbackMidBatchTests(unittest.TestCase):
         return AuditStore(url)
 
     def test_phase2_failure_triggers_rollback(self):
-        # THREE FILES: ALL MOVE TO HOLDING, THEN SECOND DESTINATION WRITE FAILS → ROLLBACK.
+        # THREE FILES ALL MOVE TO HOLDING THEN SECOND DESTINATION WRITE FAILS AND ROLLBACK.
         import opencoeus.executor as executor_mod
         from unittest.mock import patch
         original = executor_mod.HOLDING_ROOT
@@ -765,13 +765,13 @@ class PartialRollbackMidBatchTests(unittest.TestCase):
                 # PARTIAL: AT LEAST ONE FAILED.
                 self.assertGreater(result.failed, 0)
                 self.assertGreater(result.completed, 0)
-                # ok1.txt COMPLETED PHASE 2 SUCCESSFULLY → STAYS AT DESTINATION.
+                # ok1.txt COMPLETED PHASE 2 SUCCESSFULLY AND STAYS AT DESTINATION.
                 self.assertFalse(src1.exists(), "ok1.txt was moved to dest")
                 self.assertTrue((dest_dir / "ok1.txt").exists(), "ok1.txt at dest")
-                # fail.txt FAILED IN PHASE 2 → ROLLBACK TO ORIGINAL SOURCE.
+                # fail.txt FAILED IN PHASE 2 AND ROLLS BACK TO ORIGINAL SOURCE.
                 self.assertTrue(src2.exists(), "fail.txt should be restored")
                 self.assertEqual(src2.read_text(), "content2")
-                # ok3.txt WAS IN HOLDING, NOT YET IN PHASE 2 → ROLLBACK TO ORIGINAL SOURCE.
+                # ok3.txt WAS IN HOLDING AND NOT YET IN PHASE 2 AND ROLLS BACK TO ORIGINAL SOURCE.
                 self.assertTrue(src3.exists(), "ok3.txt should be restored")
                 self.assertEqual(src3.read_text(), "content3")
                 # FAIL.TXT ENTRY SHOULD BE FAILED IN DB.
@@ -782,7 +782,7 @@ class PartialRollbackMidBatchTests(unittest.TestCase):
                 executor_mod.HOLDING_ROOT = original
 
     def test_phase1_failure_marks_correct_status(self):
-        # SOURCE FILE DELETED BETWEEN PRE-FLIGHT AND HOLDING MOVE → STATUS FAILED.
+        # SOURCE FILE DELETED BETWEEN PRE FLIGHT AND HOLDING MOVE AND STATUS FAILED.
         import opencoeus.executor as executor_mod
         original = executor_mod.HOLDING_ROOT
         with tempfile.TemporaryDirectory() as tmp:
@@ -798,7 +798,7 @@ class PartialRollbackMidBatchTests(unittest.TestCase):
                     batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
                     source_hash=sha256_file(src), source_size=src.stat().st_size,
                 )
-                # DELETE SOURCE AFTER PRE-FLIGHT PASSES (RACE CONDITION).
+                # DELETE SOURCE AFTER PRE FLIGHT PASSES (RACE CONDITION).
                 src.unlink()
                 result = execute_batch(batch.id, store)
                 self.assertEqual(result.failed, 1)
@@ -820,7 +820,7 @@ class PreFlightHashMismatchDBTests(unittest.TestCase):
         return AuditStore(url)
 
     def test_hash_mismatch_marks_failed_in_db(self):
-        # FILE IS MODIFIED BETWEEN SCAN AND EXECUTE — PRE-FLIGHT CATCHES IT.
+        # FILE IS MODIFIED BETWEEN SCAN AND EXECUTE AND PRE FLIGHT CATCHES IT.
         import opencoeus.executor as executor_mod
         original = executor_mod.HOLDING_ROOT
         with tempfile.TemporaryDirectory() as tmp:
@@ -855,7 +855,7 @@ class PreFlightHashMismatchDBTests(unittest.TestCase):
                 executor_mod.HOLDING_ROOT = original
 
     def test_size_mismatch_marks_failed_in_db(self):
-        # FILE SIZE CHANGED BETWEEN SCAN AND EXECUTE — PRE-FLIGHT CATCHES IT.
+        # FILE SIZE CHANGED BETWEEN SCAN AND EXECUTE AND PRE FLIGHT CATCHES IT.
         import opencoeus.executor as executor_mod
         original = executor_mod.HOLDING_ROOT
         with tempfile.TemporaryDirectory() as tmp:
@@ -940,7 +940,7 @@ class FullDBStateVerificationTests(unittest.TestCase):
                 executor_mod.HOLDING_ROOT = original
 
     def test_run_execution_mixed_results_state(self):
-        # ONE VALID FILE + ONE MISSING → MIXED COMPLETED/FAILED, BATCH STATUS COMPLETED.
+        # ONE VALID FILE AND ONE MISSING AND MIXED COMPLETED FAILED AND BATCH STATUS COMPLETED.
         import opencoeus.executor as executor_mod
         original = executor_mod.HOLDING_ROOT
         with tempfile.TemporaryDirectory() as tmp:

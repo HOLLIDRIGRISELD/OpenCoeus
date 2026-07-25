@@ -52,13 +52,13 @@ class LogPage(QWidget):
         )
         root.addWidget(self.log_text)
 
-    # ── MAIN WINDOW REFERENCE ──────────────────────────────────────────────
+    # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
         """STORE REFERENCE TO MAIN WINDOW."""
         self._main = main
 
-    # ── APPEND MESSAGE ─────────────────────────────────────────────────────
+    # APPEND MESSAGE
 
     def append_message(self, msg: str):
         """APPEND MESSAGE TO LOG, CAP AT 5000 LINES."""
@@ -83,7 +83,7 @@ class LogPage(QWidget):
         scrollbar = self.log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
-    # ── CLEAR LOG ──────────────────────────────────────────────────────────
+    # CLEAR LOG
 
     def clear_log(self):
         """CLEAR THE LOG TEXT."""

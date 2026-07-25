@@ -11,7 +11,7 @@ from typing import Callable, Iterator
 class FileRecord:
     path: Path
     size: int
-    # STAGE 2: EXTENDED METADATA FOR RULE MATCHING AND FOLDER DISPLAY.
+    # STAGE 2: EXTENDED METADATA FOR RULE MATCHING AND FOLDER DISPLAY
     relative_path: str = ""
     extension: str = ""
     modified_at: datetime | None = None
@@ -27,7 +27,7 @@ def iter_files(root_directory: Path, error_callback: Callable[[str], None] | Non
             with os.scandir(current_directory) as directory_entries:
                 for directory_entry in directory_entries:
                     try:
-                        # SKIPS SYMBOLIC LINKS TO PREVENT LOOPS AND UNEXPECTED LOCATIONS.
+                        # SKIPS SYMBOLIC LINKS TO PREVENT LOOPS AND UNEXPECTED LOCATIONS
                         if directory_entry.is_symlink():
                             continue
                         item_path = Path(directory_entry.path)
@@ -36,7 +36,7 @@ def iter_files(root_directory: Path, error_callback: Callable[[str], None] | Non
                         elif directory_entry.is_file(follow_symlinks=False):
                             file_stat = directory_entry.stat(follow_symlinks=False)
                             file_size = file_stat.st_size
-                            # COMPUTES EXTENDED METADATA FOR STAGE 2 RULE MATCHING.
+                            # COMPUTES EXTENDED METADATA FOR STAGE 2 RULE MATCHING
                             relative_path_value = item_path.relative_to(root_directory).as_posix()
                             extension_value = item_path.suffix.lower()
                             modified_at_value = datetime.fromtimestamp(file_stat.st_mtime, tz=timezone.utc)

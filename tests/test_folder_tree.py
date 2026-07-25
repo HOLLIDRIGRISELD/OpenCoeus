@@ -199,7 +199,7 @@ class SetFolderExclusionTests(unittest.TestCase):
             self.assertFalse(node.included)
 
     def test_includes_previously_excluded_folder(self):
-        # VERIFIES THAT SETTING excluded=False RE-INCLUDES A PREVIOUSLY EXCLUDED FOLDER.
+        # VERIFIES THAT SETTING excluded=False RE INCLUDES A PREVIOUSLY EXCLUDED FOLDER.
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             (root / "target").mkdir()

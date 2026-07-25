@@ -32,7 +32,7 @@ class HashingTests(unittest.TestCase):
             self.assertNotEqual(hash_of_first, hash_of_second)
 
     def test_hash_is_hex_string_of_expected_length(self):
-        # VERIFIES THAT THE HASH IS A 64-CHARACTER HEXADECIMAL STRING.
+        # VERIFIES THAT THE HASH IS A 64 CHARACTER HEXADECIMAL STRING.
         with tempfile.TemporaryDirectory() as temporary_directory:
             test_root = Path(temporary_directory)
             test_file = test_root / "hash_check.bin"
@@ -75,7 +75,7 @@ class HashingTests(unittest.TestCase):
             test_file = test_root / "known.bin"
             test_file.write_bytes(b"hello")
             computed_hash = sha256_file(test_file)
-            # SHA-256 OF "hello" IS A WELL-KNOWN VALUE.
+            # SHA-256 OF "hello" IS A WELL KNOWN VALUE.
             expected_hash = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
             self.assertEqual(computed_hash, expected_hash)
 

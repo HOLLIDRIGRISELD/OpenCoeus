@@ -73,13 +73,13 @@ class FoldersPage(QWidget):
         self.card_tree.check_changed.connect(self._on_folder_toggled)
         root.addWidget(make_container(self.card_tree))
 
-    # ── MAIN WINDOW REFERENCE ──────────────────────────────────────────────
+    # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
         """STORE REFERENCE TO MAIN WINDOW."""
         self._main = main
 
-    # ── TREE POPULATION ────────────────────────────────────────────────────
+    # TREE POPULATION
 
     def fill_tree(self, root_node: FolderNode):
         """POPULATE CARDTREE FROM A FOLDERNODE TREE."""
@@ -128,7 +128,7 @@ class FoldersPage(QWidget):
             # RECURSE.
             self._add_tree_children(child, depth + 1)
 
-    # ── EXPAND / COLLAPSE ─────────────────────────────────────────────────
+    # EXPAND / COLLAPSE
 
     def _expand_all(self):
         """EXPAND ALL FOLDERS."""
@@ -138,7 +138,7 @@ class FoldersPage(QWidget):
         """COLLAPSE ALL FOLDERS."""
         self.card_tree.collapseAll()
 
-    # ── CHECKBOX HANDLING ──────────────────────────────────────────────────
+    # CHECKBOX HANDLING
 
     def _on_folder_toggled(self, row_index: int, checked: bool):
         """HANDLE CHECKBOX TOGGLING WITH PERSISTENCE TO DATABASE."""
@@ -166,7 +166,7 @@ class FoldersPage(QWidget):
         # REBUILD EXCLUDED SET FROM ALL CHECKBOXES (PROPAGATION AFFECTS CHILDREN).
         self._excluded = self.card_tree.getExcludedPaths()
 
-    # ── PUBLIC ACCESSORS ───────────────────────────────────────────────────
+    # PUBLIC ACCESSORS
 
     def get_excluded_folders(self) -> set[str]:
         """RETURN CURRENT EXCLUDED FOLDER SET."""

@@ -170,7 +170,7 @@ class ScanEngineEdgeCaseTests(unittest.TestCase):
         # VERIFIES THAT ERRORS ARE RECORDED WHEN FILES CANNOT BE HASHED.
         with tempfile.TemporaryDirectory() as temporary_directory:
             test_root = Path(temporary_directory)
-            # CREATE TWO SAME-SIZE FILES WHERE ONE WILL BE HASHED.
+            # CREATE TWO SAME SIZE FILES WHERE ONE WILL BE HASHED.
             (test_root / "file_a.bin").write_bytes(b"same content!!")
             (test_root / "file_b.bin").write_bytes(b"same content!!")
             store = self._create_store_outside_root(test_root)

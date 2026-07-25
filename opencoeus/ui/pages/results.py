@@ -84,13 +84,13 @@ class ResultsPage(QWidget):
         self.error_section.hide()
         root.addWidget(self.error_section)
 
-    # ── MAIN WINDOW REFERENCE ──────────────────────────────────────────────
+    # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
         """STORE REFERENCE TO MAIN WINDOW."""
         self._main = main
 
-    # ── FILL RESULTS ───────────────────────────────────────────────────────
+    # FILL RESULTS
 
     def fill_results(self, result: ScanResult):
         """POPULATE RESULTS TABLE WITH COLOR-CODED STATUS."""
@@ -130,7 +130,7 @@ class ResultsPage(QWidget):
             ],
         )
 
-    # ── ERROR DISPLAY ──────────────────────────────────────────────────────
+    # ERROR DISPLAY
 
     def show_errors(self, errors: list[str]):
         """SHOW/HIDE ERROR SECTION."""
@@ -140,7 +140,7 @@ class ResultsPage(QWidget):
         self.error_section.show()
         self.error_section.setPlainText("\n".join(errors))
 
-    # ── FILTERING ──────────────────────────────────────────────────────────
+    # FILTERING
 
     def _filter_results(self):
         """FILTER BY COMBO SELECTION AND SEARCH TEXT."""
@@ -208,7 +208,7 @@ class ResultsPage(QWidget):
                 f"{dup_count} duplicates", original.sha256, original.duplicate_of,
             )
 
-    # ── DOUBLE-CLICK TO OPEN FILE ──────────────────────────────────────────
+    # DOUBLE CLICK TO OPEN FILE
 
     def _on_result_double_clicked(self, row: int):
         """OPEN FILE IN DEFAULT APPLICATION ON DOUBLE-CLICK."""

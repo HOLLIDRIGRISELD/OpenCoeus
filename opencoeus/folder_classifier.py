@@ -5,7 +5,7 @@ import re
 from .folder_tree import FolderNode
 
 
-# WELL-KNOWN DIRECTORY NAME PATTERNS FOR EACH CLASSIFICATION CATEGORY.
+# WELL KNOWN DIRECTORY NAME PATTERNS FOR EACH CLASSIFICATION CATEGORY
 _PATTERNS = {
     "system": [
         r"^windows$", r"^program files", r"^programdata$", r"^recovery$",
@@ -49,8 +49,8 @@ def classify_folder(
     compiled_patterns: dict[str, list[re.Pattern]] | None = None,
     custom_patterns: list[str] | None = None,
 ) -> tuple[str, str, str]:
-    # CLASSIFIES A FOLDER AND RETURNS (CLASSIFICATION, RECOMMENDED_ACTION, REASON).
-    # CHECKS THE FOLDER NAME AGAINST ALL WELL-KNOWN PATTERNS.
+    # CLASSIFIES A FOLDER AND RETURNS (CLASSIFICATION, RECOMMENDED ACTION, REASON)
+    # CHECKS THE FOLDER NAME AGAINST ALL WELL KNOWN PATTERNS
     folder_name = node.name
     if compiled_patterns is None:
         compiled_patterns = _compile_all_patterns(custom_patterns)
@@ -59,7 +59,7 @@ def classify_folder(
             if pattern.search(folder_name):
                 action, reason = _action_for_category(category, node)
                 return category, action, reason
-    # PROTECTED FOLDERS THAT DID NOT MATCH A SPECIFIC PATTERN DEFAULT TO EXCLUDE.
+    # PROTECTED FOLDERS THAT DID NOT MATCH A SPECIFIC PATTERN DEFAULT TO EXCLUDE
     if node.is_protected:
         return "system", "exclude", f"Folder '{folder_name}' is a protected system path."
     return "unknown", "ask_user", f"No specific rule matched for '{folder_name}'."
@@ -68,7 +68,7 @@ def classify_folder(
 def _compile_all_patterns(
     custom_patterns: list[str] | None = None,
 ) -> dict[str, list[re.Pattern]]:
-    # COMPILES ALL CATEGORY PATTERNS AND ANY USER-PROVIDED CUSTOM PATTERNS INTO REGEX OBJECTS.
+    # COMPILES ALL CATEGORY PATTERNS AND ANY USER PROVIDED CUSTOM PATTERNS INTO REGEX OBJECTS
     compiled = {}
     for category, raw_patterns in _PATTERNS.items():
         compiled[category] = [re.compile(p, re.IGNORECASE) for p in raw_patterns]
@@ -78,13 +78,13 @@ def _compile_all_patterns(
 
 
 def _action_for_category(category: str, node: FolderNode) -> tuple[str, str]:
-    # DETERMINES THE RECOMMENDED ACTION AND EXPLANATION FOR EACH CLASSIFICATION CATEGORY.
+    # DETERMINES THE RECOMMENDED ACTION AND EXPLANATION FOR EACH CLASSIFICATION CATEGORY
     if category == "system":
         return "exclude", f"System folder '{node.name}' should not be modified."
     if category == "virtual_environment":
         return "exclude", f"Virtual environment '{node.name}' contains installed packages, not user data."
     if category == "package_dependencies":
-        return "exclude", f"Dependency folder '{node.name}' is auto-generated and should not be organized."
+        return "exclude", f"Dependency folder '{node.name}' is auto generated and should not be organized."
     if category == "version_control":
         return "exclude", f"Version control folder '{node.name}' manages project history and must stay in place."
     if category == "game_library":
@@ -92,9 +92,9 @@ def _action_for_category(category: str, node: FolderNode) -> tuple[str, str]:
     if category == "application":
         return "exclude", f"Application support folder '{node.name}' is used by installed software."
     if category == "source_code":
-        return "ask_user", f"Source code folder '{node.name}' may contain project files; review before organizing."
+        return "ask_user", f"Source code folder '{node.name}' may contain project files, review before organizing."
     if category == "custom":
-        return "ask_user", f"Custom rule matched folder '{node.name}'; review before organizing."
+        return "ask_user", f"Custom rule matched folder '{node.name}', review before organizing."
     return "ask_user", f"Unknown folder type for '{node.name}'."
 
 
@@ -102,7 +102,7 @@ def classify_tree(
     root: FolderNode,
     custom_patterns: list[str] | None = None,
 ) -> list[dict]:
-    # WALKS THE ENTIRE TREE AND CLASSIFIES EVERY FOLDER, RETURNING A LIST OF CLASSIFICATION DICTS.
+    # WALKS THE ENTIRE TREE AND CLASSIFIES EVERY FOLDER, RETURNING A LIST OF CLASSIFICATION DICTS
     compiled = _compile_all_patterns(custom_patterns)
     classifications = []
     _classify_recursive(root, compiled, classifications)
@@ -114,7 +114,7 @@ def _classify_recursive(
     compiled_patterns: dict[str, list[re.Pattern]],
     accumulator: list[dict],
 ) -> None:
-    # CLASSIFIES THE CURRENT NODE AND RECURSIVELY PROCESSES ALL CHILDREN.
+    # CLASSIFIES THE CURRENT NODE AND RECURSIVELY PROCESSES ALL CHILDREN
     classification, action, reason = classify_folder(node, compiled_patterns)
     node.classification = classification
     node.recommended_action = action

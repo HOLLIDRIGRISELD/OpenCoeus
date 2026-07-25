@@ -22,15 +22,13 @@ class BatchSummary:
     status: str
 
 
-# ------------------------------------------------------------------ #
-#  PREPARE EXECUTION                                                    #
-# ------------------------------------------------------------------ #
+# PREPARE EXECUTION
 
 
 def prepare_execution(store: AuditStore, profile_id: int, description: str = "") -> tuple[int, int]:
-    # CREATES A BATCH AND ENTRIES FROM APPROVED PROPOSED ACTION ROWS.
-    # RETURNS (BATCH_ID, ENTRY_COUNT).
-    # USES A SINGLE SESSION FOR ALL ENTRIES (AVOIDS N+1 SESSION OPENS).
+    # CREATES A BATCH AND ENTRIES FROM APPROVED PROPOSED ACTION ROWS
+    # RETURNS (BATCH ID, ENTRY COUNT)
+    # USES A SINGLE SESSION FOR ALL ENTRIES (AVOIDS N+1 SESSION OPENS)
     from .hashing import sha256_file
     from .models import EntryStatus, TransactionBatch, TransactionEntry
     actions = store.get_proposed_actions(profile_id)
@@ -71,13 +69,11 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
     return (batch.id, len(approved))
 
 
-# ------------------------------------------------------------------ #
-#  BATCH SUMMARY                                                        #
-# ------------------------------------------------------------------ #
+# BATCH SUMMARY
 
 
 def get_batch_summary(store: AuditStore, batch_id: int) -> BatchSummary:
-    # RETURNS COUNTS BY STATUS FOR A BATCH USING SQL GROUP BY (NO N+1).
+    # RETURNS COUNTS BY STATUS FOR A BATCH USING SQL GROUP BY (NO N+1)
     from sqlalchemy import func, select
     from .models import TransactionEntry
     with store.session_factory() as session:
@@ -102,9 +98,7 @@ def get_batch_summary(store: AuditStore, batch_id: int) -> BatchSummary:
     )
 
 
-# ------------------------------------------------------------------ #
-#  EXECUTE ORCHESTRATION                                                #
-# ------------------------------------------------------------------ #
+# EXECUTE ORCHESTRATION
 
 
 def run_execution(
@@ -112,22 +106,20 @@ def run_execution(
     store: AuditStore,
     progress_callback=None,
 ) -> ExecutionResult:
-    # EXECUTES A BATCH AND RETURNS THE RESULT.
+    # EXECUTES A BATCH AND RETURNS THE RESULT
     logger.info("Executing batch %d", batch_id)
     return execute_batch(batch_id, store, progress_callback)
 
 
-# ------------------------------------------------------------------ #
-#  UNDO ORCHESTRATION                                                   #
-# ------------------------------------------------------------------ #
+# UNDO ORCHESTRATION
 
 
 def undo_last_batch(
     store: AuditStore,
     profile_id: int | None = None,
 ) -> tuple[int | None, list[str]]:
-    # FINDS MOST RECENT COMPLETED BATCH AND REVERSES ALL ENTRIES.
-    # RETURNS (BATCH_ID, ERRORS).
+    # FINDS MOST RECENT COMPLETED BATCH AND REVERSES ALL ENTRIES
+    # RETURNS (BATCH ID, ERRORS)
     batches = store.get_undoable_batches(profile_id)
     if not batches:
         return (None, ["No completed batches to undo"])

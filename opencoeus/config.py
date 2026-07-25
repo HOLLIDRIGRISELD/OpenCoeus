@@ -33,7 +33,7 @@ PLATFORM_PROTECTED_PATTERNS = {
 
 
 def default_protected_patterns(operating_system_name: str | None = None) -> list[str]:
-    # COMBINES COMMON RULES WITH RULES FOR THE CURRENT OPERATING SYSTEM.
+    # COMBINES COMMON RULES WITH RULES FOR THE CURRENT OPERATING SYSTEM
     detected_operating_system = operating_system_name or platform.system()
     return COMMON_PROTECTED_PATTERNS + PLATFORM_PROTECTED_PATTERNS.get(detected_operating_system, [])
 
@@ -47,7 +47,7 @@ class ScanSettings:
 
 
 def default_application_data_directory(operating_system_name: str | None = None) -> Path:
-    # SELECTS THE NATIVE PER-USER DATA LOCATION FOR EACH SUPPORTED PLATFORM.
+    # SELECTS THE NATIVE PER USER DATA LOCATION FOR EACH SUPPORTED PLATFORM
     detected_operating_system = operating_system_name or platform.system()
     if detected_operating_system == "Windows":
         return Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "OpenCoeus"
@@ -64,7 +64,7 @@ def database_url() -> str:
     try:
         application_data_directory.mkdir(parents=True, exist_ok=True)
     except OSError:
-        # USES A LOCAL FOLDER WHEN THE NORMAL PER-USER DATA DIRECTORY IS READ-ONLY.
+        # USES A LOCAL FOLDER WHEN THE NORMAL PER USER DATA DIRECTORY IS READ ONLY
         logger.warning("Falling back to local .opencoeus directory")
         application_data_directory = Path.cwd() / ".opencoeus"
         application_data_directory.mkdir(parents=True, exist_ok=True)

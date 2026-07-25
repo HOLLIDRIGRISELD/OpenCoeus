@@ -26,8 +26,8 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-# EXPECTED COLUMNS PER TABLE THAT MAY BE MISSING FROM OLDER DATABASES.
-# FORMAT: {table_name: [(column_name, sqlite_ddl), ...]}
+# EXPECTED COLUMNS PER TABLE THAT MAY BE MISSING FROM OLDER DATABASES
+# FORMAT IS TABLE NAME MAPPED TO LIST OF (COLUMN NAME, SQLITE DDL) TUPLES
 _EXPECTED_COLUMNS = {
     "file_audits": [
         ("relative_path", "TEXT"),
@@ -46,8 +46,8 @@ _EXPECTED_COLUMNS = {
 
 
 def _ensure_columns(engine) -> None:
-    # INSPECTS EXISTING TABLES AND ADDS ANY COLUMNS DEFINED IN THE MODEL BUT MISSING FROM THE DB.
-    # THIS HANDLES SCHEMA DRIFT FOR OLDER DATABASES WITHOUT A FULL MIGRATION FRAMEWORK.
+    # INSPECTS EXISTING TABLES AND ADDS ANY COLUMNS DEFINED IN THE MODEL BUT MISSING FROM THE DB
+    # THIS HANDLES SCHEMA DRIFT FOR OLDER DATABASES WITHOUT A FULL MIGRATION FRAMEWORK
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     tables_to_check = [t for t in _EXPECTED_COLUMNS if t in existing_tables]
@@ -69,7 +69,7 @@ class AuditStore:
             database_connection_url or database_url(),
             poolclass=NullPool,
         )
-        # ENABLE FOREIGN KEY ENFORCEMENT FOR SQLITE ON EVERY NEW CONNECTION.
+        # ENABLE FOREIGN KEY ENFORCEMENT FOR SQLITE ON EVERY NEW CONNECTION
         @event.listens_for(self.engine, "connect")
         def _set_sqlite_pragma(dbapi_conn, _connection_record):
             cursor = dbapi_conn.cursor()
@@ -102,7 +102,7 @@ class AuditStore:
             session.commit()
 
     def record_files_batch(self, records: list[tuple]) -> None:
-        # BULK INSERTS OR UPDATES MULTIPLE FILE RECORDS IN A SINGLE SESSION FOR PERFORMANCE.
+        # BULK INSERTS OR UPDATES MULTIPLE FILE RECORDS IN A SINGLE SESSION FOR PERFORMANCE
         logger.debug("Recording %d files to database", len(records))
         if not records:
             return
@@ -151,12 +151,12 @@ class AuditStore:
             session.commit()
             return available_title
 
-    # STAGE 2: PROFILE MANAGEMENT METHODS.
+    # STAGE 2: PROFILE MANAGEMENT METHODS
 
     def create_profile(self, name: str, root_path: str = "", included_folders: list[str] | None = None,
                        excluded_folders: list[str] | None = None, custom_protected_patterns: list[str] | None = None,
                        document_extraction: bool = True) -> ScanProfile:
-        # CREATES AND PERSISTS A NEW SCAN PROFILE WITH DEFAULT EMPTY FOLDER LISTS.
+        # CREATES AND PERSISTS A NEW SCAN PROFILE WITH DEFAULT EMPTY FOLDER LISTS
         with self.session_factory() as session:
             profile = ScanProfile(
                 name=name,
@@ -172,22 +172,22 @@ class AuditStore:
             return profile
 
     def list_profiles(self) -> list[ScanProfile]:
-        # RETURNS ALL SAVED SCAN PROFILES ORDERED BY NAME.
+        # RETURNS ALL SAVED SCAN PROFILES ORDERED BY NAME
         with self.session_factory() as session:
             return list(session.scalars(select(ScanProfile).order_by(ScanProfile.name)).all())
 
     def get_profile(self, profile_id: int) -> ScanProfile | None:
-        # RETRIEVES A SINGLE SCAN PROFILE BY ITS ID.
+        # RETRIEVES A SINGLE SCAN PROFILE BY ITS ID
         with self.session_factory() as session:
             return session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
 
     def get_profile_by_name(self, profile_name: str) -> ScanProfile | None:
-        # RETRIEVES A SINGLE SCAN PROFILE BY ITS UNIQUE NAME.
+        # RETRIEVES A SINGLE SCAN PROFILE BY ITS UNIQUE NAME
         with self.session_factory() as session:
             return session.scalar(select(ScanProfile).where(ScanProfile.name == profile_name))
 
     def update_profile(self, profile_id: int, **kwargs) -> ScanProfile | None:
-        # UPDATES SPECIFIED FIELDS ON A SCAN PROFILE AND RECORDS THE UPDATE TIME.
+        # UPDATES SPECIFIED FIELDS ON A SCAN PROFILE AND RECORDS THE UPDATE TIME
         serializable_fields = {"included_folders", "excluded_folders", "custom_protected_patterns"}
         with self.session_factory() as session:
             profile = session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
@@ -203,37 +203,37 @@ class AuditStore:
             return profile
 
     def delete_profile(self, profile_id: int) -> bool:
-        # REMOVES A SCAN PROFILE AND ALL ITS ASSOCIATED CLASSIFICATIONS AND RULES.
+        # REMOVES A SCAN PROFILE AND ALL ITS ASSOCIATED CLASSIFICATIONS AND RULES
         with self.session_factory() as session:
             profile = session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
             if profile is None:
                 return False
-            # DELETE ASSOCIATED CLASSIFICATIONS.
+            # DELETE ASSOCIATED CLASSIFICATIONS
             classifications = session.scalars(
                 select(FolderClassification).where(FolderClassification.scan_profile_id == profile_id)
             ).all()
             for classification in classifications:
                 session.delete(classification)
-            # DELETE ASSOCIATED RULES.
+            # DELETE ASSOCIATED RULES
             rules = session.scalars(
                 select(OrganizationRule).where(OrganizationRule.scan_profile_id == profile_id)
             ).all()
             for rule in rules:
                 session.delete(rule)
-            # DELETE ASSOCIATED PROPOSED ACTIONS.
+            # DELETE ASSOCIATED PROPOSED ACTIONS
             actions = session.scalars(
                 select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
             ).all()
             for action in actions:
                 session.delete(action)
-            # DELETE ASSOCIATED TRANSACTION BATCHES AND ENTRIES.
+            # DELETE ASSOCIATED TRANSACTION BATCHES AND ENTRIES
             batch_ids = [
                 b.id for b in session.scalars(
                     select(TransactionBatch).where(TransactionBatch.scan_profile_id == profile_id)
                 ).all()
             ]
             if batch_ids:
-                # CLEAR BATCH_ID REFERENCES FROM PROPOSED ACTIONS FIRST (FK).
+                # CLEAR BATCH_ID REFERENCES FROM PROPOSED ACTIONS FIRST (FK)
                 actions_with_batch = session.scalars(
                     select(ProposedAction).where(ProposedAction.batch_id.in_(batch_ids))
                 ).all()
@@ -248,7 +248,7 @@ class AuditStore:
                     batch = session.get(TransactionBatch, bid)
                     if batch:
                         session.delete(batch)
-            # DELETE ASSOCIATED NAMING HISTORY.
+            # DELETE ASSOCIATED NAMING HISTORY
             naming = session.scalars(
                 select(NamingHistory).where(NamingHistory.scan_profile_id == profile_id)
             ).all()
@@ -258,19 +258,19 @@ class AuditStore:
             session.commit()
             return True
 
-    # STAGE 2: FOLDER CLASSIFICATION METHODS.
+    # STAGE 2: FOLDER CLASSIFICATION METHODS
 
     def save_classifications(self, profile_id: int, classifications: list[dict]) -> None:
-        # SAVES A LIST OF FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE.
-        # SKIPS IF PROFILE DOES NOT EXIST (PREVENTS FK VIOLATIONS FROM ORPHANED DATA).
+        # SAVES A LIST OF FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE
+        # SKIPS IF PROFILE DOES NOT EXIST (PREVENTS FK VIOLATIONS FROM ORPHANED DATA)
         with self.session_factory() as session:
             if not session.get(ScanProfile, profile_id):
                 return
-            # BULK DELETE EXISTING CLASSIFICATIONS FOR THIS PROFILE.
+            # BULK DELETE EXISTING CLASSIFICATIONS FOR THIS PROFILE
             session.query(FolderClassification).filter(
                 FolderClassification.scan_profile_id == profile_id
             ).delete(synchronize_session="fetch")
-            # BULK INSERT NEW CLASSIFICATIONS.
+            # BULK INSERT NEW CLASSIFICATIONS
             new_objects = [
                 FolderClassification(
                     scan_profile_id=profile_id,
@@ -286,14 +286,14 @@ class AuditStore:
             session.commit()
 
     def get_classifications(self, profile_id: int) -> list[FolderClassification]:
-        # RETURNS ALL FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE.
+        # RETURNS ALL FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE
         with self.session_factory() as session:
             return list(session.scalars(
                 select(FolderClassification).where(FolderClassification.scan_profile_id == profile_id)
             ).all())
 
     def update_classification_override(self, classification_id: int, user_override: str | None) -> bool:
-        # UPDATES THE USER OVERRIDE FOR A SPECIFIC FOLDER CLASSIFICATION.
+        # UPDATES THE USER OVERRIDE FOR A SPECIFIC FOLDER CLASSIFICATION
         with self.session_factory() as session:
             classification = session.scalar(
                 select(FolderClassification).where(FolderClassification.id == classification_id)
@@ -304,11 +304,11 @@ class AuditStore:
             session.commit()
             return True
 
-    # STAGE 2: ORGANIZATION RULE METHODS.
+    # STAGE 2: ORGANIZATION RULE METHODS
 
     def create_rule(self, profile_id: int, name: str, rule_type: str, rule_config: dict,
                     destination_template: str, priority: int = 0, enabled: bool = True) -> OrganizationRule:
-        # CREATES AND PERSISTS A NEW ORGANIZATION RULE FOR A PROFILE.
+        # CREATES AND PERSISTS A NEW ORGANIZATION RULE FOR A PROFILE
         with self.session_factory() as session:
             rule = OrganizationRule(
                 scan_profile_id=profile_id,
@@ -325,7 +325,7 @@ class AuditStore:
             return rule
 
     def get_rules(self, profile_id: int) -> list[OrganizationRule]:
-        # RETURNS ALL ORGANIZATION RULES FOR A PROFILE ORDERED BY PRIORITY.
+        # RETURNS ALL ORGANIZATION RULES FOR A PROFILE ORDERED BY PRIORITY
         with self.session_factory() as session:
             return list(session.scalars(
                 select(OrganizationRule)
@@ -334,7 +334,7 @@ class AuditStore:
             ).all())
 
     def get_enabled_rules(self, profile_id: int) -> list[OrganizationRule]:
-        # RETURNS ONLY ENABLED ORGANIZATION RULES FOR A PROFILE.
+        # RETURNS ONLY ENABLED ORGANIZATION RULES FOR A PROFILE
         with self.session_factory() as session:
             return list(session.scalars(
                 select(OrganizationRule)
@@ -343,7 +343,7 @@ class AuditStore:
             ).all())
 
     def update_rule(self, rule_id: int, **kwargs) -> OrganizationRule | None:
-        # UPDATES SPECIFIED FIELDS ON AN ORGANIZATION RULE.
+        # UPDATES SPECIFIED FIELDS ON AN ORGANIZATION RULE
         if "rule_config" in kwargs and isinstance(kwargs["rule_config"], dict):
             kwargs["rule_config"] = json.dumps(kwargs["rule_config"])
         with self.session_factory() as session:
@@ -358,12 +358,12 @@ class AuditStore:
             return rule
 
     def delete_rule(self, rule_id: int) -> bool:
-        # REMOVES AN ORGANIZATION RULE BY ITS ID AND CLEANS UP ORPHANED PROPOSED ACTIONS.
+        # REMOVES AN ORGANIZATION RULE BY ITS ID AND CLEANS UP ORPHANED PROPOSED ACTIONS
         with self.session_factory() as session:
             rule = session.scalar(select(OrganizationRule).where(OrganizationRule.id == rule_id))
             if rule is None:
                 return False
-            # CLEAR RULE_ID FROM PROPOSED ACTIONS REFERENCING THIS RULE.
+            # CLEAR RULE_ID FROM PROPOSED ACTIONS REFERENCING THIS RULE
             actions = session.scalars(
                 select(ProposedAction).where(ProposedAction.rule_id == rule_id)
             ).all()
@@ -373,17 +373,17 @@ class AuditStore:
             session.commit()
             return True
 
-    # STAGE 2: PROPOSED ACTION METHODS.
+    # STAGE 2: PROPOSED ACTION METHODS
 
     def save_proposed_actions(self, profile_id: int, actions: list[dict]) -> None:
-        # SAVES A LIST OF PROPOSED ACTIONS, CLEARING PREVIOUS ONES FOR THE PROFILE.
+        # SAVES A LIST OF PROPOSED ACTIONS, CLEARING PREVIOUS ONES FOR THE PROFILE
         with self.session_factory() as session:
-            # GET EXISTING ACTION IDS FOR THIS PROFILE.
+            # GET EXISTING ACTION IDS FOR THIS PROFILE
             existing_ids = list(session.scalars(
                 select(ProposedAction.id).where(ProposedAction.scan_profile_id == profile_id)
             ).all())
             if existing_ids:
-                # NULL OUT FK REFERENCES FROM TRANSACTION_ENTRIES BEFORE DELETING.
+                # NULL OUT FK REFERENCES FROM TRANSACTION_ENTRIES BEFORE DELETING
                 session.execute(
                     update(TransactionEntry)
                     .where(TransactionEntry.action_id.in_(existing_ids))
@@ -392,7 +392,7 @@ class AuditStore:
                 session.execute(
                     delete(ProposedAction).where(ProposedAction.id.in_(existing_ids))
                 )
-            # VALIDATE RULE IDS EXIST IN THE DATABASE BEFORE INSERTING.
+            # VALIDATE RULE IDS EXIST IN THE DATABASE BEFORE INSERTING
             rule_ids = {a.get("rule_id") for a in actions if a.get("rule_id") is not None}
             valid_rule_ids = set()
             if rule_ids:
@@ -412,14 +412,14 @@ class AuditStore:
             session.commit()
 
     def get_proposed_actions(self, profile_id: int) -> list[ProposedAction]:
-        # RETURNS ALL PROPOSED ACTIONS FOR A GIVEN PROFILE.
+        # RETURNS ALL PROPOSED ACTIONS FOR A GIVEN PROFILE
         with self.session_factory() as session:
             return list(session.scalars(
                 select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
             ).all())
 
     def approve_action(self, action_id: int) -> bool:
-        # MARKS A PROPOSED ACTION AS APPROVED FOR FUTURE EXECUTION.
+        # MARKS A PROPOSED ACTION AS APPROVED FOR FUTURE EXECUTION
         with self.session_factory() as session:
             action = session.scalar(select(ProposedAction).where(ProposedAction.id == action_id))
             if action is None:
@@ -429,7 +429,7 @@ class AuditStore:
             return True
 
     def reject_action(self, action_id: int) -> bool:
-        # REMOVES A PROPOSED ACTION BY ITS ID (REJECTION).
+        # REMOVES A PROPOSED ACTION BY ITS ID (REJECTION)
         with self.session_factory() as session:
             action = session.scalar(select(ProposedAction).where(ProposedAction.id == action_id))
             if action is None:
@@ -439,7 +439,7 @@ class AuditStore:
             return True
 
     def approve_all_actions(self, profile_id: int) -> int:
-        # MARKS ALL PROPOSED ACTIONS FOR A PROFILE AS APPROVED AND RETURNS THE COUNT.
+        # MARKS ALL PROPOSED ACTIONS FOR A PROFILE AS APPROVED AND RETURNS THE COUNT
         with self.session_factory() as session:
             actions = session.scalars(
                 select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
@@ -451,10 +451,10 @@ class AuditStore:
             session.commit()
             return count
 
-    # STAGE 3: TRANSACTION BATCH AND ENTRY METHODS.
+    # STAGE 3: TRANSACTION BATCH AND ENTRY METHODS
 
     def create_batch(self, profile_id: int, description: str = "") -> TransactionBatch:
-        # CREATES A NEW TRANSACTION BATCH FOR TRACKING EXECUTION OF APPROVED ACTIONS.
+        # CREATES A NEW TRANSACTION BATCH FOR TRACKING EXECUTION OF APPROVED ACTIONS
         with self.session_factory() as session:
             batch = TransactionBatch(
                 scan_profile_id=profile_id,
@@ -469,7 +469,7 @@ class AuditStore:
     def add_entry(self, batch_id: int, action_id: int | None, action_type: str,
                   source_path: str, destination_path: str,
                   source_hash: str = "", source_size: int = 0) -> TransactionEntry:
-        # ADDS A SINGLE TRANSACTION ENTRY TO A BATCH.
+        # ADDS A SINGLE TRANSACTION ENTRY TO A BATCH
         with self.session_factory() as session:
             entry = TransactionEntry(
                 batch_id=batch_id,
@@ -487,7 +487,7 @@ class AuditStore:
             return entry
 
     def get_entries_by_batch(self, batch_id: int, status: str | None = None) -> list[TransactionEntry]:
-        # RETURNS ALL ENTRIES FOR A BATCH, OPTIONALLY FILTERED BY STATUS.
+        # RETURNS ALL ENTRIES FOR A BATCH, OPTIONALLY FILTERED BY STATUS
         with self.session_factory() as session:
             stmt = select(TransactionEntry).where(TransactionEntry.batch_id == batch_id)
             if status is not None:
@@ -495,7 +495,7 @@ class AuditStore:
             return list(session.scalars(stmt).all())
 
     def update_entry(self, entry_id: int, **kwargs) -> bool:
-        # UPDATES SPECIFIED FIELDS ON A TRANSACTION ENTRY.
+        # UPDATES SPECIFIED FIELDS ON A TRANSACTION ENTRY
         _allowed_update = {"status", "error_message", "destination_path", "source_hash",
                            "source_size", "destination_hash", "holding_path", "executed_at"}
         with self.session_factory() as session:
@@ -513,7 +513,7 @@ class AuditStore:
             return True
 
     def mark_batch(self, batch_id: int, status: str, **kwargs) -> bool:
-        # UPDATES BATCH STATUS AND OPTIONAL FIELDS LIKE COMPLETED_AT OR UNDONE_AT.
+        # UPDATES BATCH STATUS AND OPTIONAL FIELDS LIKE COMPLETED_AT OR UNDONE_AT
         _allowed_batch_fields = {"status", "updated_at", "completed_at", "undone_at"}
         with self.session_factory() as session:
             batch = session.scalar(select(TransactionBatch).where(TransactionBatch.id == batch_id))
@@ -527,7 +527,7 @@ class AuditStore:
             return True
 
     def get_undoable_batches(self, profile_id: int | None = None) -> list[TransactionBatch]:
-        # RETURNS COMPLETED BATCHES IN REVERSE ORDER (MOST RECENT FIRST) FOR UNDO.
+        # RETURNS COMPLETED BATCHES IN REVERSE ORDER (MOST RECENT FIRST) FOR UNDO
         with self.session_factory() as session:
             stmt = select(TransactionBatch).where(TransactionBatch.status == BatchStatus.COMPLETED)
             if profile_id is not None:
@@ -535,7 +535,7 @@ class AuditStore:
             return list(session.scalars(stmt.order_by(TransactionBatch.id.desc())).all())
 
     def get_all_batches(self, profile_id: int | None = None, limit: int = 20) -> list[TransactionBatch]:
-        # RETURNS ALL BATCHES IN REVERSE ORDER FOR THE BATCH HISTORY TABLE.
+        # RETURNS ALL BATCHES IN REVERSE ORDER FOR THE BATCH HISTORY TABLE
         with self.session_factory() as session:
             stmt = select(TransactionBatch)
             if profile_id is not None:
@@ -543,7 +543,7 @@ class AuditStore:
             return list(session.scalars(stmt.order_by(TransactionBatch.id.desc()).limit(limit)).all())
 
     def get_batch_entry_counts(self, batch_ids: list[int]) -> dict[int, int]:
-        # RETURNS ENTRY COUNTS FOR MULTIPLE BATCHES IN A SINGLE QUERY (AVOIDS N+1).
+        # RETURNS ENTRY COUNTS FOR MULTIPLE BATCHES IN A SINGLE QUERY (AVOIDS N+1)
         if not batch_ids:
             return {}
         from sqlalchemy import func
@@ -556,7 +556,7 @@ class AuditStore:
             return {batch_id: count for batch_id, count in rows}
 
     def get_latest_completed_batch(self, profile_id: int) -> TransactionBatch | None:
-        # RETURNS THE MOST RECENTLY COMPLETED BATCH FOR A PROFILE.
+        # RETURNS THE MOST RECENTLY COMPLETED BATCH FOR A PROFILE
         with self.session_factory() as session:
             return session.scalar(
                 select(TransactionBatch)
@@ -568,12 +568,12 @@ class AuditStore:
             )
 
     def get_batch(self, batch_id: int) -> TransactionBatch | None:
-        # RETURNS A SINGLE BATCH BY ID.
+        # RETURNS A SINGLE BATCH BY ID
         with self.session_factory() as session:
             return session.get(TransactionBatch, batch_id)
 
     def delete_proposed_actions_by_ids(self, action_ids: list[int]) -> int:
-        # DELETES SPECIFIC PROPOSED ACTIONS BY THEIR IDS (REJECTION). RETURNS COUNT DELETED.
+        # DELETES SPECIFIC PROPOSED ACTIONS BY THEIR IDS (REJECTION) AND RETURNS COUNT DELETED
         if not action_ids:
             return 0
         with self.session_factory() as session:

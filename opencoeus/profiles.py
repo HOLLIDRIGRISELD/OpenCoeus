@@ -9,7 +9,7 @@ from .models import ScanProfile
 
 @dataclass
 class ProfileConfig:
-    # IN-MEMORY REPRESENTATION OF A SCAN PROFILE FOR EASY PASSING BETWEEN MODULES.
+    # IN MEMORY REPRESENTATION OF A SCAN PROFILE FOR EASY PASSING BETWEEN MODULES
     profile_id: int | None = None
     name: str = ""
     root_path: str = ""
@@ -28,7 +28,7 @@ def create_profile(
     custom_protected_patterns: list[str] | None = None,
     document_extraction: bool = True,
 ) -> ProfileConfig:
-    # CREATES A NEW SCAN PROFILE IN THE DATABASE AND RETURNS IT AS A ProfileConfig.
+    # CREATES A NEW SCAN PROFILE IN THE DATABASE AND RETURNS IT AS A PROFILE CONFIG
     db_profile = store.create_profile(
         name=name,
         root_path=root_path,
@@ -41,7 +41,7 @@ def create_profile(
 
 
 def load_profile(store: AuditStore, profile_id: int) -> ProfileConfig | None:
-    # LOADS A SCAN PROFILE BY ID AND RETURNS IT AS A ProfileConfig, OR NONE IF NOT FOUND.
+    # LOADS A SCAN PROFILE BY ID AND RETURNS IT AS A PROFILE CONFIG, OR NONE IF NOT FOUND
     db_profile = store.get_profile(profile_id)
     if db_profile is None:
         return None
@@ -49,7 +49,7 @@ def load_profile(store: AuditStore, profile_id: int) -> ProfileConfig | None:
 
 
 def load_profile_by_name(store: AuditStore, profile_name: str) -> ProfileConfig | None:
-    # LOADS A SCAN PROFILE BY NAME AND RETURNS IT AS A ProfileConfig, OR NONE IF NOT FOUND.
+    # LOADS A SCAN PROFILE BY NAME AND RETURNS IT AS A PROFILE CONFIG, OR NONE IF NOT FOUND
     db_profile = store.get_profile_by_name(profile_name)
     if db_profile is None:
         return None
@@ -57,14 +57,14 @@ def load_profile_by_name(store: AuditStore, profile_name: str) -> ProfileConfig 
 
 
 def list_profiles(store: AuditStore) -> list[ProfileConfig]:
-    # RETURNS ALL SAVED SCAN PROFILES AS ProfileConfig OBJECTS ORDERED BY NAME.
+    # RETURNS ALL SAVED SCAN PROFILES AS PROFILE CONFIG OBJECTS ORDERED BY NAME
     db_profiles = store.list_profiles()
     return [_db_profile_to_config(db_profile) for db_profile in db_profiles]
 
 
 def update_profile(store: AuditStore, profile_id: int, **kwargs) -> ProfileConfig | None:
-    # UPDATES A SCAN PROFILE AND RETURNS THE UPDATED ProfileConfig, OR NONE IF NOT FOUND.
-    # CONVERTS ProfileConfig LIST FIELDS TO PLAIN LISTS FOR THE DATABASE LAYER.
+    # UPDATES A SCAN PROFILE AND RETURNS THE UPDATED PROFILE CONFIG, OR NONE IF NOT FOUND
+    # CONVERTS PROFILE CONFIG LIST FIELDS TO PLAIN LISTS FOR THE DATABASE LAYER
     serializable_keys = {"included_folders", "excluded_folders", "custom_protected_patterns"}
     for key in serializable_keys:
         if key in kwargs and isinstance(kwargs[key], ProfileConfig):
@@ -76,15 +76,15 @@ def update_profile(store: AuditStore, profile_id: int, **kwargs) -> ProfileConfi
 
 
 def delete_profile(store: AuditStore, profile_id: int) -> bool:
-    # DELETES A SCAN PROFILE AND ALL ASSOCIATED DATA, RETURNING TRUE ON SUCCESS.
+    # DELETES A SCAN PROFILE AND ALL ASSOCIATED DATA, RETURNING TRUE ON SUCCESS
     return store.delete_profile(profile_id)
 
 
 def _db_profile_to_config(db_profile: ScanProfile) -> ProfileConfig:
-    # CONVERTS A DATABASE ScanProfile ORM OBJECT INTO A LIGHTWEIGHT ProfileConfig DATACLASS.
+    # CONVERTS A DATABASE SCAN PROFILE ORM OBJECT INTO A LIGHTWEIGHT PROFILE CONFIG DATACLASS
     import json
     def _safe_json_list(value: str) -> list[str]:
-        # PARSES JSON STRING TO LIST, RETURNING EMPTY LIST ON MALFORMED DATA.
+        # PARSES JSON STRING TO LIST, RETURNING EMPTY LIST ON MALFORMED DATA
         try:
             result = json.loads(value)
             return result if isinstance(result, list) else []

@@ -73,7 +73,7 @@ class ClassifyFolderTests(unittest.TestCase):
         self.assertIn("protected", reason)
 
     def test_custom_patterns_are_applied(self):
-        # VERIFIES THAT USER-PROVIDED CUSTOM PATTERNS ARE USED FOR CLASSIFICATION.
+        # VERIFIES THAT USER PROVIDED CUSTOM PATTERNS ARE USED FOR CLASSIFICATION.
         node = _make_node("my_special_dir")
         classification, action, reason = classify_folder(node, custom_patterns=[r"^my_special_dir$"])
         self.assertEqual(classification, "custom")

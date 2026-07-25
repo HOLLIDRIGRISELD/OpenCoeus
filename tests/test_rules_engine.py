@@ -356,7 +356,7 @@ class RuleDictMutationTests(unittest.TestCase):
 
 class RegexPrecompileTests(unittest.TestCase):
     def test_compiled_patterns_prepared_internally(self):
-        # VERIFIES THAT PATTERNS ARE PRE-COMPILED INTERNALLY DURING EVALUATE.
+        # VERIFIES THAT PATTERNS ARE PRE COMPILED INTERNALLY DURING EVALUATE.
         engine = RulesEngine(ProfileConfig(), scan_root="/")
         rule = _make_rule(rule_id=1, name="Pattern", rule_type="pattern",
                           rule_config={"patterns": [r"^report.*\.txt$"]}, priority=1)
@@ -365,7 +365,7 @@ class RegexPrecompileTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
 
     def test_compiled_extensions_prepared_internally(self):
-        # VERIFIES THAT EXTENSION SETS ARE PRE-COMPILED INTERNALLY DURING EVALUATE.
+        # VERIFIES THAT EXTENSION SETS ARE PRE COMPILED INTERNALLY DURING EVALUATE.
         engine = RulesEngine(ProfileConfig(), scan_root="/")
         rule = _make_rule(rule_id=1, name="Ext", rule_type="extension",
                           rule_config={"extensions": [".txt", ".md"]}, priority=1)
@@ -406,7 +406,7 @@ class TimezoneAwareDateTests(unittest.TestCase):
         return RulesEngine(ProfileConfig(), scan_root="/test")
 
     def test_timezone_aware_date_converts_correctly(self):
-        # VERIFIES THAT TIMEZONE-AWARE DATES ARE CONVERTED TO LOCAL TIME BEFORE COMPARISON.
+        # VERIFIES THAT TIMEZONE AWARE DATES ARE CONVERTED TO LOCAL TIME BEFORE COMPARISON.
         engine = self._make_engine()
         row = ManifestRow(
             path="/test/file.txt", size=100, sha256="", status="unique",

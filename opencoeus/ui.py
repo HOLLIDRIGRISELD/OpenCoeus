@@ -144,7 +144,7 @@ class ExecutionWorker(QThread):
             result = run_execution(self.batch_id, self.store, lambda msg: self.message.emit(str(msg)))
             self.finished_execution.emit(result)
         except Exception as exc:
-            # BUILD RESULT WITHOUT LAZY IMPORT (avoids import failure inside except).
+            # BUILD RESULT WITHOUT LAZY IMPORT TO AVOID IMPORT FAILURE INSIDE EXCEPT.
             result = ExecutionResult.__new__(ExecutionResult)
             result.total = 0
             result.completed = 0
@@ -584,7 +584,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ---- SIDEBAR (text nav) ----
+        # SIDEBAR
         sidebar = QWidget()
         sidebar.setFixedWidth(150)
         sidebar.setStyleSheet(f"""
@@ -614,7 +614,7 @@ class MainWindow(QMainWindow):
         sb_layout.addStretch()
         root.addWidget(sidebar)
 
-        # ---- MAIN CONTENT ----
+        # MAIN CONTENT
         content = QWidget()
         content.setStyleSheet(f"background: {COLORS['bg']};")
         content_layout = QVBoxLayout(content)
@@ -723,7 +723,7 @@ class MainWindow(QMainWindow):
         lbl.setWordWrap(True)
         return lbl
 
-    # -- HOME PAGE -------------------------------------------------------- #
+    # HOME PAGE
     def _build_home_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -779,7 +779,7 @@ class MainWindow(QMainWindow):
         lay.addStretch()
         return page
 
-    # -- FOLDERS PAGE ----------------------------------------------------- #
+    # FOLDERS PAGE
     def _build_folders_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -804,7 +804,7 @@ class MainWindow(QMainWindow):
 
         return page
 
-    # -- RESULTS PAGE ----------------------------------------------------- #
+    # RESULTS PAGE
     def _build_results_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -929,7 +929,7 @@ class MainWindow(QMainWindow):
             for r in groups[orig_path]:
                 t.setRowHidden(r, False)
 
-    # -- ACTIONS PAGE ----------------------------------------------------- #
+    # ACTIONS PAGE
     def _build_actions_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -1030,7 +1030,7 @@ class MainWindow(QMainWindow):
 
         return page
 
-    # -- RULES PAGE ------------------------------------------------------- #
+    # RULES PAGE
     def _build_rules_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -1127,7 +1127,7 @@ class MainWindow(QMainWindow):
                 del self.active_rules[r]
         self._refresh_rules_table()
 
-    # -- LOG PAGE --------------------------------------------------------- #
+    # LOG PAGE
     def _build_log_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -1182,9 +1182,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(widget)
         return frame
 
-    # ------------------------------------------------------------------ #
-    #  PAGE NAVIGATION                                                     #
-    # ------------------------------------------------------------------ #
+    # PAGE NAVIGATION
     def _switch_page(self, index: int) -> None:
         if index < 0 or index >= len(self._pages):
             return
@@ -1198,9 +1196,7 @@ class MainWindow(QMainWindow):
         if folder:
             self.folder_path_input.setText(folder)
 
-    # ------------------------------------------------------------------ #
-    #  PHASE ONE                                                           #
-    # ------------------------------------------------------------------ #
+    # PHASE ONE
     def _start_phase_one(self) -> None:
         folder = Path(self.folder_path_input.text())
         if not folder.is_dir():
@@ -1262,9 +1258,7 @@ class MainWindow(QMainWindow):
                 self.audit_log.setTextCursor(cursor)
         self._log_timer.stop()
 
-    # ------------------------------------------------------------------ #
-    #  PHASE TWO                                                           #
-    # ------------------------------------------------------------------ #
+    # PHASE TWO
     def _start_phase_two(self) -> None:
         folder = Path(self.folder_path_input.text())
         if not folder.is_dir():
@@ -1334,9 +1328,7 @@ class MainWindow(QMainWindow):
             )
             self.export_worker.start()
 
-    # ------------------------------------------------------------------ #
-    #  THREAD CLEANUP                                                      #
-    # ------------------------------------------------------------------ #
+    # THREAD CLEANUP
     def _cleanup_workers(self) -> None:
         for worker in (self.phase_one_worker, self.phase_two_worker,
                        self.execution_worker, self.prepare_worker, self.undo_worker):
@@ -1357,9 +1349,7 @@ class MainWindow(QMainWindow):
         self._cleanup_workers()
         event.accept()
 
-    # ------------------------------------------------------------------ #
-    #  ACTIONS TABLE CONTROLS                                              #
-    # ------------------------------------------------------------------ #
+    # ACTIONS TABLE CONTROLS
     def _approve_selected(self) -> None:
         rows = {idx.row() for idx in self.actions_table.selectedIndexes()}
         for r in rows:
@@ -1394,7 +1384,7 @@ class MainWindow(QMainWindow):
         self._refresh_actions_count()
 
     def _sync_proposed_matches_from_table(self) -> None:
-        # REBUILDS proposed_matches FROM TABLE ROWS USING PATH LOOKUP INSTEAD OF INDEX.
+        # REBUILDS PROPOSED_MATCHES FROM TABLE ROWS USING PATH LOOKUP INSTEAD OF INDEX.
         remaining: list[RuleMatch] = []
         known_paths = {m.original_path for m in self.proposed_matches}
         for r in range(self.actions_table.rowCount()):
@@ -1420,9 +1410,7 @@ class MainWindow(QMainWindow):
         self.execute_btn.setEnabled(approved > 0)
         self._refresh_batch_history()
 
-    # ------------------------------------------------------------------ #
-    #  EXECUTE / UNDO / BATCH HISTORY                                      #
-    # ------------------------------------------------------------------ #
+    # EXECUTE UNDO BATCH HISTORY
     def _execute_approved(self) -> None:
         # PREPARES AND EXECUTES ALL APPROVED ACTIONS.
         # GUARD: PREVENT DOUBLE-ACTIVATION.
@@ -1571,9 +1559,7 @@ class MainWindow(QMainWindow):
             t.blockSignals(False)
             t.setUpdatesEnabled(True)
 
-    # ------------------------------------------------------------------ #
-    #  PROFILES                                                            #
-    # ------------------------------------------------------------------ #
+    # PROFILES
     def _load_profiles(self) -> None:
         self.profile_list.clear()
         profiles = list_profiles(self.store)
@@ -1619,9 +1605,7 @@ class MainWindow(QMainWindow):
             self.current_profile = None
             self._load_profiles()
 
-    # ------------------------------------------------------------------ #
-    #  FOLDER TREE                                                         #
-    # ------------------------------------------------------------------ #
+    # FOLDER TREE
     def _fill_folder_tree(self, root: FolderNode) -> None:
         self.folder_tree.clear()
         self.folder_tree.blockSignals(True)
@@ -1714,9 +1698,7 @@ class MainWindow(QMainWindow):
             parent.setCheckState(0, Qt.CheckState.PartiallyChecked)
         self._update_parent_check_state(parent)
 
-    # ------------------------------------------------------------------ #
-    #  POPULATE TABLES                                                     #
-    # ------------------------------------------------------------------ #
+    # POPULATE TABLES
     def _fill_results_table(self, result: ScanResult) -> None:
         t = self.results_table
         t.setUpdatesEnabled(False)

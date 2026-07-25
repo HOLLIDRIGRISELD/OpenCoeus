@@ -16,7 +16,7 @@ from opencoeus.profiles import (
 
 class CreateProfileTests(unittest.TestCase):
     def test_create_profile_returns_config_with_id(self):
-        # VERIFIES THAT create_profile RETURNS A ProfileConfig WITH A NON-None profile_id.
+        # VERIFIES THAT create_profile RETURNS A ProfileConfig WITH A NON NONE profile_id.
         with tempfile.TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "test.sqlite3"
             store = AuditStore(f"sqlite:///{database_path.as_posix()}")

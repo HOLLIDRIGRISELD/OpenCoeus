@@ -8,7 +8,7 @@ from .safety import is_protected
 
 @dataclass
 class FolderNode:
-    # REPRESENTS A SINGLE FOLDER IN THE DIRECTORY TREE WITH METADATA FOR UI DISPLAY.
+    # REPRESENTS A SINGLE FOLDER IN THE DIRECTORY TREE WITH METADATA FOR UI DISPLAY
     name: str
     path: Path
     depth: int
@@ -28,8 +28,8 @@ def build_folder_tree(
     max_depth: int = 5,
     progress_callback=None,
 ) -> FolderNode:
-    # BUILDS A RECURSIVE FOLDER TREE STARTING AT root_path, STOPPING AT max_depth.
-    # COMPUTES FILE COUNTS AND SIZES IN A SINGLE PASS DURING POPULATION.
+    # BUILDS A RECURSIVE FOLDER TREE STARTING AT root_path, STOPPING AT max_depth
+    # COMPUTES FILE COUNTS AND SIZES IN A SINGLE PASS DURING POPULATION
     root_node = FolderNode(
         name=root_path.name or str(root_path),
         path=root_path,
@@ -47,12 +47,12 @@ def _populate_and_compute(
     progress_callback,
     _folder_counter: list[int] | None = None,
 ) -> None:
-    # RECURSIVELY DISCOVERS SUBDIRECTORIES, POPULATES CHILDREN, AND COMPUTES STATS IN ONE PASS.
+    # RECURSIVELY DISCOVERS SUBDIRECTORIES, POPULATES CHILDREN, AND COMPUTES STATS IN ONE PASS
     if parent_node.depth >= max_depth:
         return
     if _folder_counter is None:
         _folder_counter = [0]
-    # DISCOVER ALL ENTRIES IN A SINGLE PASS: COUNT FILES, COLLECT SUBDIRECTORIES.
+    # DISCOVER ALL ENTRIES IN A SINGLE PASS: COUNT FILES, COLLECT SUBDIRECTORIES
     try:
         sorted_entries = sorted(parent_node.path.iterdir(), key=lambda entry: entry.name.lower())
     except PermissionError:
@@ -66,7 +66,7 @@ def _populate_and_compute(
                 parent_node.total_size += entry.stat(follow_symlinks=False).st_size
             except OSError:
                 pass
-    # POPULATE CHILDREN.
+    # POPULATE CHILDREN
     for entry in sorted_entries:
         if not entry.is_dir():
             continue
@@ -83,20 +83,20 @@ def _populate_and_compute(
         if progress_callback and _folder_counter[0] % 5 == 0:
             progress_callback(child_node.path)
         _populate_and_compute(child_node, protected_patterns, max_depth, progress_callback, _folder_counter)
-        # AGGREGATE CHILD STATS UP TO PARENT.
+        # AGGREGATE CHILD STATS UP TO PARENT
         parent_node.file_count += child_node.file_count
         parent_node.total_size += child_node.total_size
 
 
 def flatten_tree(root: FolderNode) -> list[dict]:
-    # CONVERTS THE NESTED TREE INTO A FLAT LIST OF DICTS WITH DEPTH FOR UI RENDERING.
+    # CONVERTS THE NESTED TREE INTO A FLAT LIST OF DICTS WITH DEPTH FOR UI RENDERING
     flat_list = []
     _flatten_recursive(root, flat_list)
     return flat_list
 
 
 def build_node_index(root: FolderNode) -> dict[str, FolderNode]:
-    # BUILDS A PATH-STRING TO FOLDERNODE DICTIONARY FOR O(1) LOOKUPS.
+    # BUILDS A PATH STRING TO FOLDER NODE DICTIONARY FOR O(1) LOOKUPS
     index: dict[str, FolderNode] = {}
     _index_recursive(root, index)
     return index
@@ -109,7 +109,7 @@ def _index_recursive(node: FolderNode, index: dict[str, FolderNode]) -> None:
 
 
 def _flatten_recursive(node: FolderNode, accumulator: list[dict]) -> None:
-    # APPENDS EACH NODE TO THE FLAT LIST IN PREORDER TRAVERSAL.
+    # APPENDS EACH NODE TO THE FLAT LIST IN PREORDER TRAVERSAL
     accumulator.append({
         "name": node.name,
         "path": node.path.as_posix(),
@@ -127,7 +127,7 @@ def _flatten_recursive(node: FolderNode, accumulator: list[dict]) -> None:
 
 
 def find_node(root: FolderNode, target_path: Path) -> FolderNode | None:
-    # SEARCHES THE TREE FOR A NODE MATCHING THE GIVEN PATH, RETURNING NONE IF NOT FOUND.
+    # SEARCHES THE TREE FOR A NODE MATCHING THE GIVEN PATH, RETURNING NONE IF NOT FOUND
     if root.path == target_path:
         return root
     for child in root.children:
@@ -139,7 +139,7 @@ def find_node(root: FolderNode, target_path: Path) -> FolderNode | None:
 
 def set_folder_exclusion(root: FolderNode, target_path: Path, excluded: bool,
                          node_index: dict[str, FolderNode] | None = None) -> bool:
-    # TOGGLES THE EXCLUDED FLAG ON A SPECIFIC FOLDER AND RETURNS WHETHER IT WAS FOUND.
+    # TOGGLES THE EXCLUDED FLAG ON A SPECIFIC FOLDER AND RETURNS WHETHER IT WAS FOUND
     if node_index is not None:
         node = node_index.get(target_path.as_posix())
     else:

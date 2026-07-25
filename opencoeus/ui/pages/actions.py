@@ -118,13 +118,13 @@ class ActionsPage(QWidget):
 
         root.addStretch()
 
-    # ── MAIN WINDOW REFERENCE ──────────────────────────────────────────────
+    # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
         """STORE REFERENCE TO MAIN WINDOW."""
         self._main = main
 
-    # ── FILL ACTIONS ───────────────────────────────────────────────────────
+    # FILL ACTIONS
 
     def fill_actions(self, matches: list[RuleMatch], action_id_map: dict[str, int]):
         """POPULATE ACTIONS TABLE FROM RULE MATCHES."""
@@ -173,7 +173,7 @@ class ActionsPage(QWidget):
         actions = store.get_proposed_actions(profile_id)
         return {a.id for a in actions if a.approved}
 
-    # ── APPROVE / REJECT ───────────────────────────────────────────────────
+    # APPROVE / REJECT
 
     def approve_selected(self):
         """APPROVE SELECTED ACTIONS AND PERSIST TO DB."""
@@ -249,7 +249,7 @@ class ActionsPage(QWidget):
 
         self.refresh_actions_count()
 
-    # ── REFRESH COUNT ──────────────────────────────────────────────────────
+    # REFRESH COUNT
 
     def refresh_actions_count(self):
         """UPDATE COUNT LABEL AND EXECUTE BUTTON STATE."""
@@ -257,7 +257,7 @@ class ActionsPage(QWidget):
         self.count_label.setText(f"{count} actions")
         self._btn_execute.setEnabled(count > 0)
 
-    # ── BATCH HISTORY ──────────────────────────────────────────────────────
+    # BATCH HISTORY
 
     def refresh_batch_history(self):
         """POPULATE BATCH HISTORY TABLE."""
@@ -314,7 +314,7 @@ class ActionsPage(QWidget):
         dialog = BatchDetailDialog(store, batch_id, parent=self)
         dialog.exec()
 
-    # ── EXECUTE / UNDO ────────────────────────────────────────────────────
+    # EXECUTE / UNDO
 
     def _execute_batch(self):
         """DELEGATE BATCH EXECUTION TO MAIN WINDOW."""

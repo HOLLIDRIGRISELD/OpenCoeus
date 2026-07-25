@@ -3,9 +3,7 @@ Theme module for the OpenCoeus UI.
 Provides color constants, button QSS generators, and global/dialog stylesheets.
 """
 
-# ==============================================================================
 # COLOR CONSTANTS
-# ==============================================================================
 
 COLORS = {
     "bg":          "#14151e",
@@ -31,9 +29,7 @@ COLORS = {
 }
 
 
-# ==============================================================================
 # BUTTON QSS GENERATORS
-# ==============================================================================
 
 def accent_button_qss() -> str:
     """Return QSS for sky blue accent buttons (Discover, Save)."""
@@ -160,9 +156,7 @@ def text_button_qss() -> str:
     """
 
 
-# ==============================================================================
 # GLOBAL STYLESHEET
-# ==============================================================================
 
 def global_stylesheet() -> str:
     """Return the complete QSS stylesheet for the main application window."""
@@ -434,9 +428,7 @@ def global_stylesheet() -> str:
     """
 
 
-# ==============================================================================
 # DIALOG STYLESHEET
-# ==============================================================================
 
 def dialog_stylesheet() -> str:
     """Return the QSS stylesheet for modal dialogs (ProfileEditDialog, etc.)."""

@@ -90,13 +90,13 @@ class HomePage(QWidget):
 
         root.addStretch()
 
-    # ── MAIN WINDOW REFERENCE ──────────────────────────────────────────────
+    # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
         """STORE REFERENCE TO MAIN WINDOW FOR CROSS-PAGE ACCESS."""
         self._main = main
 
-    # ── PROFILE MANAGEMENT ─────────────────────────────────────────────────
+    # PROFILE MANAGEMENT
 
     def load_profiles(self, store: AuditStore):
         """POPULATE PROFILE LIST FROM DATABASE."""
@@ -159,7 +159,7 @@ class HomePage(QWidget):
                     delete_profile(self._main.store, profile.profile_id)
                     self.load_profiles(self._main.store)
 
-    # ── STATS ──────────────────────────────────────────────────────────────
+    # STATS
 
     def update_stats(self, folders, files, duplicates, actions):
         """UPDATE THE 4 STAT CARD VALUES."""
