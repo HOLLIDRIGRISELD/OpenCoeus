@@ -36,10 +36,55 @@
 - [x] UI: Execute Approved and Undo buttons, batch history table, ExecutionWorker and UndoWorker background threads.
 - [x] CLI: execute (--dry-run) and undo subcommands.
 - [x] Refactor: BatchStatus/EntryStatus enums, DEFAULT_RULES single source in rules_engine.py, absolute holding path, mutual exclusion guards, N+1 query fix, regex pre-compilation, profile cascade delete, date safety guard, cache eviction.
-- [x] 278 automated tests across 16 test files including end-to-end round-trip, partial rollback, pre-flight hash mismatch, and full DB state verification tests.
+- [x] Comprehensive codebase audit: 48 issues fixed across critical, high, medium, and low severity levels.
+- [x] Runtime bug fixes: profile creation FK, QColor crashes, stale DB, broken update_profile, status_badge column width.
+- [x] UI rewrite: modular package architecture, CardTable, CardTree, unified button styling, modern card-based design across all pages.
+- [x] 290 automated tests across 16 test files including end-to-end round-trip, partial rollback, pre-flight hash mismatch, and full DB state verification tests.
 
-## Next: spreadsheet workflows and release (Stage 4)
+## Next: smart renaming (Stage 4)
 
-- [ ] Define supported spreadsheet schemas before enabling .xlsx or .xlsm consolidation.
-- [ ] Implement read-only spreadsheet inspection, followed by an approved master-workbook workflow.
-- [ ] Build, package, and test on clean offline Windows, macOS, and Linux machines.
+- [ ] Add {title}, {title_sanitized}, {date}, {date_month} template variables to rules engine.
+- [ ] Add "rename" action type alongside existing "move" action.
+- [ ] Create safe_rename() function in executor for same-directory renames.
+- [ ] Build smart filename constructor: title + metadata into clean filesystem name.
+- [ ] Handle rename collisions, length limits, and special character sanitisation.
+- [ ] Add proposed rename preview column to results table.
+- [ ] Add "Has suggested title" filter to results page.
+- [ ] Add approve/reject workflow for renames in actions page.
+- [ ] Add default "Smart rename documents" rule (PDF/DOCX to suggested title).
+- [ ] Add default "Photos by date" rule (rename photos to YYYY-MM-DD - name).
+- [ ] Extend transaction journal to support rename entries with rollback.
+- [ ] CLI subcommand: rename (--dry-run).
+- [ ] Tests: rename collision resolution, title extraction, template rendering, undo round-trip.
+
+## Future: AI-powered renaming with NLP (Stage 5)
+
+- [ ] Add spaCy as runtime dependency for local NLP processing.
+- [ ] Build NLP title extractor: keyword extraction, sentence importance scoring.
+- [ ] Build document classifier: detect document type (invoice, report, contract, letter, manual, etc.).
+- [ ] Build smart title generator: combine document type + keywords + metadata into standardised filename.
+- [ ] Create NamingStrategy interface with two implementations: RuleBasedStrategy (Stage 4) and NLPStrategy (Stage 5).
+- [ ] Add naming strategy selector to profile settings (rule-based vs NLP vs hybrid).
+- [ ] Add NLP confidence score to each suggested title for user review.
+- [ ] Add "AI Suggested" column to results table with confidence indicator.
+- [ ] Batch rename mode: apply NLP titles to all matching documents with one-click approval.
+- [ ] Learn naming conventions from existing files in target folder (pattern detection).
+- [ ] Fallback chain: NLP fails to rule-based to original filename.
+- [ ] Tests: NLP extraction accuracy, classifier precision, naming convention detection, fallback behaviour.
+
+## Future: spreadsheet consolidation (Stage 6)
+
+- [ ] Define supported .xlsx and .xlsm data schemas with representative files.
+- [ ] Add read-only spreadsheet inspection before any conversion or consolidation.
+- [ ] Add approved master-workbook generation with source links and validation reports.
+- [ ] Add "spreadsheet" action type for merge/consolidate operations.
+- [ ] Tests: schema validation, master-workbook integrity, source traceability.
+
+## Future: packaging and release quality (Stage 7)
+
+- [ ] Build and test signed PyInstaller packages on clean Windows, macOS, and Linux systems.
+- [ ] Add auto-update check mechanism (offline-compatible version file).
+- [ ] Add first-run welcome wizard with profile setup.
+- [ ] Performance profiling and optimisation for large directories (100k+ files).
+- [ ] Accessibility audit: keyboard navigation, screen reader labels, high-contrast mode.
+- [ ] End-to-end smoke tests on clean machines.
