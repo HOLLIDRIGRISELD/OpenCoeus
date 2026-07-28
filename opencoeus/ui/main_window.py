@@ -8,7 +8,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QAction, QColor, QKeySequence
 from PyQt6.QtWidgets import (
     QButtonGroup, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QMenu, QMenuBar, QMessageBox, QProgressBar,
+    QMainWindow, QMenu, QMessageBox, QProgressBar,
     QPushButton, QStatusBar, QVBoxLayout, QWidget,
 )
 
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("OpenCoeus v0.1.0")
@@ -84,6 +85,7 @@ class MainWindow(QMainWindow):
 
         # INITIAL DATA LOAD.
         self._load_profiles()
+        self._load_rules_for_current_profile()
         self._switch_page(0)
         self.status_bar.showMessage("Ready")
 
@@ -432,7 +434,8 @@ class MainWindow(QMainWindow):
         profile_id = self.current_profile.profile_id
         actions_data = [
             {"original_path": m.original_path, "proposed_path": m.proposed_path,
-             "action_type": m.action_type, "rule_id": m.rule_id, "reason": m.reason}
+             "action_type": m.action_type, "rule_id": m.rule_id, "reason": m.reason,
+             "original_filename": m.original_filename, "new_filename": m.new_filename}
             for m in matches
         ]
         self.store.save_proposed_actions(profile_id, actions_data)
@@ -445,6 +448,14 @@ class MainWindow(QMainWindow):
         self._switch_page(2)
 
         dup = scan_result.duplicate_count
+        move_count = sum(1 for m in matches if m.action_type == "move")
+        rename_count = sum(1 for m in matches if m.action_type in {"rename", "move+rename"})
+        action_parts = []
+        if move_count:
+            action_parts.append(f"{move_count} moves")
+        if rename_count:
+            action_parts.append(f"{rename_count} renames")
+        action_summary = ", ".join(action_parts) if action_parts else f"{len(matches)} actions"
         self.home_page.update_stats(
             folders=len(scan_result.classifications) if hasattr(scan_result, 'classifications') else "—",
             files=len(scan_result.rows),
@@ -452,10 +463,10 @@ class MainWindow(QMainWindow):
             actions=len(matches),
         )
         self.status_bar.showMessage(
-            f"Phase 2 complete — {len(scan_result.rows)} files, {dup} duplicates, {len(matches)} actions"
+            f"Phase 2 complete — {len(scan_result.rows)} files, {dup} duplicates, {action_summary}"
         )
         self._on_log_message(
-            f"<b>Phase 2:</b> {len(scan_result.rows)} files, {dup} duplicates, {len(matches)} actions proposed."
+            f"<b>Phase 2:</b> {len(scan_result.rows)} files, {dup} duplicates, {action_summary} proposed."
         )
 
     # EXPORT
@@ -492,7 +503,7 @@ class MainWindow(QMainWindow):
             return
         confirm = QMessageBox.question(
             self, "Execute Actions",
-            f"Execute {approved_count} approved file moves?",
+            f"Execute {approved_count} approved actions?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
@@ -500,7 +511,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.show()
         self.status_bar.showMessage("Preparing execution...")
         self._cleanup_workers()
-        self.prepare_worker = PrepareWorker(self.store, profile_id, f"{approved_count} file moves from UI")
+        self.prepare_worker = PrepareWorker(self.store, profile_id, f"{approved_count} actions from UI")
         self.prepare_worker.finished_preparation.connect(self._on_preparation_done)
         self.prepare_worker.failed.connect(self._on_preparation_failed)
         self.prepare_worker.start()
@@ -604,6 +615,14 @@ class MainWindow(QMainWindow):
     # PROFILES
     def _load_profiles(self) -> None:
         self.home_page.load_profiles(self.store)
+
+    def _load_rules_for_current_profile(self) -> None:
+        """Load rules for the current profile into the rules page."""
+        profile_id = 1
+        if self.current_profile and self.current_profile.profile_id:
+            profile_id = self.current_profile.profile_id
+        self.rules_page.load_rules(profile_id)
+        self.rules_page.set_store(self.store)
 
     # CRASH RECOVERY
     def _recover_crashed_batches(self) -> None:

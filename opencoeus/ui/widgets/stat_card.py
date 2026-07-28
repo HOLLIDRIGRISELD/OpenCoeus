@@ -4,6 +4,7 @@ from ..theme import COLORS
 
 
 class StatCard(QWidget):
+
     def __init__(self, title: str, value: str, accent: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)

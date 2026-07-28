@@ -26,9 +26,8 @@ class BatchSummary:
 
 
 def prepare_execution(store: AuditStore, profile_id: int, description: str = "") -> tuple[int, int]:
-    # CREATES A BATCH AND ENTRIES FROM APPROVED PROPOSED ACTION ROWS
-    # RETURNS (BATCH ID, ENTRY COUNT)
-    # USES A SINGLE SESSION FOR ALL ENTRIES (AVOIDS N+1 SESSION OPENS)
+    """Create batch and entries from approved proposed action rows.
+    Returns (batch_id, entry_count). Uses a single session to avoid N+1 opens."""
     from .hashing import sha256_file
     from .models import EntryStatus, TransactionBatch, TransactionEntry
     actions = store.get_proposed_actions(profile_id)
@@ -36,10 +35,19 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
     logger.info("Preparing execution: profile %d, %d approved actions", profile_id, len(approved))
     if not approved:
         return (0, 0)
+    # COUNT MOVES AND RENAMES FOR DESCRIPTIVE BATCH NAME
+    move_count = sum(1 for a in approved if a.action_type == "move")
+    rename_count = sum(1 for a in approved if a.action_type in {"rename", "move+rename"})
+    parts = []
+    if move_count:
+        parts.append(f"{move_count} move{'s' if move_count != 1 else ''}")
+    if rename_count:
+        parts.append(f"{rename_count} rename{'s' if rename_count != 1 else ''}")
+    default_description = ", ".join(parts) if parts else f"{len(approved)} actions"
     with store.session_factory() as session:
         batch = TransactionBatch(
             scan_profile_id=profile_id,
-            description=description or f"{len(approved)} file moves",
+            description=description or default_description,
             status=BatchStatus.PENDING,
         )
         session.add(batch)
@@ -54,12 +62,16 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
                     source_hash = sha256_file(source)
             except Exception as exc:
                 logger.warning("Hash computation failed for %s: %s", action.original_path, exc)
+            original_name = action.original_filename or Path(action.original_path).name
+            new_name = action.new_filename or Path(action.proposed_path).name
             entry = TransactionEntry(
                 batch_id=batch.id,
                 action_id=action.id,
                 action_type=action.action_type,
                 source_path=action.original_path,
                 destination_path=action.proposed_path,
+                original_filename=original_name,
+                new_filename=new_name,
                 source_hash=source_hash,
                 source_size=source_size,
                 status=EntryStatus.PENDING,
@@ -73,7 +85,7 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
 
 
 def get_batch_summary(store: AuditStore, batch_id: int) -> BatchSummary:
-    # RETURNS COUNTS BY STATUS FOR A BATCH USING SQL GROUP BY (NO N+1)
+    """Return counts by status for a batch using SQL GROUP BY (no N+1)."""
     from sqlalchemy import func, select
     from .models import TransactionEntry
     with store.session_factory() as session:
@@ -106,7 +118,7 @@ def run_execution(
     store: AuditStore,
     progress_callback=None,
 ) -> ExecutionResult:
-    # EXECUTES A BATCH AND RETURNS THE RESULT
+    """Execute a batch and return the result."""
     logger.info("Executing batch %d", batch_id)
     return execute_batch(batch_id, store, progress_callback)
 
@@ -118,8 +130,8 @@ def undo_last_batch(
     store: AuditStore,
     profile_id: int | None = None,
 ) -> tuple[int | None, list[str]]:
-    # FINDS MOST RECENT COMPLETED BATCH AND REVERSES ALL ENTRIES
-    # RETURNS (BATCH ID, ERRORS)
+    """Find most recent completed batch and reverse all entries.
+    Returns (batch_id, errors)."""
     batches = store.get_undoable_batches(profile_id)
     if not batches:
         return (None, ["No completed batches to undo"])

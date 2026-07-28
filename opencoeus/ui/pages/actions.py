@@ -19,21 +19,20 @@ from .common import (
 )
 
 
-# COLUMN WIDTHS FOR ACTIONS TABLE: [ID, Status, Action, Source, Target, Rule].
-_ACTIONS_COL_WIDTHS = [50, 110, 70, 200, 200, 100]
+# COLUMN WIDTHS FOR ACTIONS TABLE: [ID, Status, Action, Source, Target, Old Name, New Name, Rule].
+_ACTIONS_COL_WIDTHS = [50, 110, 70, 200, 200, 120, 120, 80]
 
 # COLUMN WIDTHS FOR BATCH HISTORY: [BatchID, Description, Status, Actions, Date].
 _BATCH_COL_WIDTHS = [60, 200, 110, 60, 160]
 
 
 class ActionsPage(QWidget):
-    """ACTIONS PAGE WITH APPROVE/REJECT AND BATCH HISTORY."""
+    """Actions page with approve/reject and batch history."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._main = None
         self._action_id_map: dict[str, int] = {}
-        self._matches: list[RuleMatch] = []
 
         # ROOT LAYOUT
         root = QVBoxLayout(self)
@@ -76,9 +75,25 @@ class ActionsPage(QWidget):
         toolbar.addStretch()
         root.addLayout(toolbar)
 
+        # FILTER BAR
+        filter_bar = QHBoxLayout()
+        filter_bar.setSpacing(8)
+        self._filter_buttons: list[QPushButton] = []
+        filter_options = [("All", ""), ("Move", "move"), ("Rename", "rename"), ("Move+Rename", "move+rename")]
+        for i, (label, ftype) in enumerate(filter_options):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(i == 0)
+            btn.clicked.connect(lambda checked, ft=ftype: self._filter_actions(ft))
+            btn.setStyleSheet(self._filter_btn_qss(i == 0))
+            filter_bar.addWidget(btn)
+            self._filter_buttons.append(btn)
+        filter_bar.addStretch()
+        root.addLayout(filter_bar)
+
         # ACTIONS TABLE (CARD-BASED).
         self.actions_table = CardTable(
-            ["ID", "Status", "Action", "Source", "Target", "Rule"],
+            ["ID", "Status", "Action", "Source", "Target", "Old Name", "New Name", "Rule"],
             column_widths=_ACTIONS_COL_WIDTHS,
         )
         self.actions_table.row_double_clicked.connect(self._on_action_double_clicked)
@@ -101,7 +116,6 @@ class ActionsPage(QWidget):
         btn_undo.setEnabled(False)
         btn_undo.clicked.connect(self._undo_last_batch)
         btn_undo.setStyleSheet(warning_button_qss())
-        self._btn_undo = btn_undo
         exec_toolbar.addWidget(btn_undo)
 
         exec_toolbar.addStretch()
@@ -121,15 +135,43 @@ class ActionsPage(QWidget):
     # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
-        """STORE REFERENCE TO MAIN WINDOW."""
+        """Store reference to main window."""
         self._main = main
+
+    # FILTER
+
+    def _filter_btn_qss(self, active: bool) -> str:
+        """Stylesheet for filter buttons based on active state."""
+        if active:
+            return (
+                f"background: {COLORS.get('accent', '#38bdf8')}; color: white;"
+                f" padding: 4px 12px; border-radius: 4px; font-weight: bold;"
+            )
+        return (
+            f"background: {COLORS.get('surface', '#1e1e2e')};"
+            f" color: {COLORS.get('text', '#e2e8f0')};"
+            f" padding: 4px 12px; border-radius: 4px;"
+        )
+
+    def _filter_actions(self, action_filter: str):
+        """Filter actions table by action type: '' is all, 'move', 'rename', 'move+rename'."""
+        for btn, (label, ftype) in zip(self._filter_buttons,
+                                         [("All", ""), ("Move", "move"), ("Rename", "rename"), ("Move+Rename", "move+rename")]):
+            active = (ftype == action_filter)
+            btn.setChecked(active)
+            btn.setStyleSheet(self._filter_btn_qss(active))
+        for row in range(self.actions_table.rowCount()):
+            action_text = ""
+            action_widget = self.actions_table.cellWidget(row, 2)
+            if action_widget is not None and hasattr(action_widget, "text"):
+                action_text = action_widget.text()
+            self.actions_table.setRowHidden(row, action_filter and action_text.lower() != action_filter.lower())
 
     # FILL ACTIONS
 
     def fill_actions(self, matches: list[RuleMatch], action_id_map: dict[str, int]):
-        """POPULATE ACTIONS TABLE FROM RULE MATCHES."""
+        """Populate actions table from rule matches."""
         self._action_id_map = action_id_map
-        self._matches = list(matches)
 
         approved_ids = self._load_approved_ids()
         self.actions_table.clear()
@@ -143,25 +185,37 @@ class ActionsPage(QWidget):
             else:
                 badge = status_badge("PENDING", COLORS['yellow'], COLORS.get('yellow_bg', '#332e0e'))
 
+            # COLOR CODE ACTION TYPE BADGES
+            action_type = match.action_type.upper()
+            if match.action_type == "rename":
+                action_badge = status_badge(action_type, COLORS.get('accent', '#38bdf8'), COLORS.get('surface2', '#1f2038'))
+            elif match.action_type == "move+rename":
+                action_badge = status_badge(action_type, COLORS.get('purple', '#a78bfa'), COLORS.get('surface2', '#1f2038'))
+            else:
+                action_badge = status_badge(action_type, COLORS.get('text', '#e2e8f0'), COLORS.get('surface2', '#1f2038'))
+
             self.actions_table.addRow(
                 widgets=[
                     (str(db_id) if db_id else "", None),
                     ("", badge),
-                    (match.action_type.upper(), None),
+                    ("", action_badge),
                     (truncate_path(match.original_path), None),
                     (truncate_path(match.proposed_path), None),
+                    (match.original_filename, None),
+                    (match.new_filename if match.new_filename else "", None),
                     (str(match.rule_id) if match.rule_id else "", None),
                 ],
                 tooltips=[
                     "", "", match.action_type,
-                    match.original_path, match.proposed_path, match.reason,
+                    match.original_path, match.proposed_path,
+                    match.original_filename, match.new_filename, match.reason,
                 ],
             )
 
         self.refresh_actions_count()
 
     def _load_approved_ids(self) -> set[int]:
-        """LOAD SET OF APPROVED ACTION IDS FROM DB."""
+        """Load set of approved action ids from db."""
         if self._main is None or not hasattr(self._main, "store") or self._main.store is None:
             return set()
         store: AuditStore = self._main.store
@@ -176,7 +230,7 @@ class ActionsPage(QWidget):
     # APPROVE / REJECT
 
     def approve_selected(self):
-        """APPROVE SELECTED ACTIONS AND PERSIST TO DB."""
+        """Approve selected actions and persist to db."""
         selected = self.actions_table.selectedRows()
         if not selected:
             return
@@ -194,7 +248,7 @@ class ActionsPage(QWidget):
         self._refresh_action_status()
 
     def approve_all(self):
-        """APPROVE ALL ACTIONS AND PERSIST TO DB."""
+        """Approve all actions and persist to db."""
         if self._main is None or not hasattr(self._main, "store") or self._main.store is None:
             return
 
@@ -209,7 +263,7 @@ class ActionsPage(QWidget):
         self._refresh_action_status()
 
     def reject_selected(self):
-        """REMOVE SELECTED ACTIONS FROM TABLE AND DB."""
+        """Remove selected actions from table and db."""
         selected = self.actions_table.selectedRows()
         if not selected:
             return
@@ -228,7 +282,7 @@ class ActionsPage(QWidget):
         self.refresh_actions_count()
 
     def _refresh_action_status(self):
-        """UPDATE STATUS BADGES IN-PLACE AFTER APPROVAL/REJECTION."""
+        """Update status badges in-place after approval/rejection."""
         approved_ids = self._load_approved_ids()
         for r in range(self.actions_table.rowCount()):
             id_lbl = self.actions_table.item(r, 0)
@@ -252,7 +306,7 @@ class ActionsPage(QWidget):
     # REFRESH COUNT
 
     def refresh_actions_count(self):
-        """UPDATE COUNT LABEL AND EXECUTE BUTTON STATE."""
+        """Update count label and execute button state."""
         count = self.actions_table.rowCount()
         self.count_label.setText(f"{count} actions")
         self._btn_execute.setEnabled(count > 0)
@@ -260,7 +314,7 @@ class ActionsPage(QWidget):
     # BATCH HISTORY
 
     def refresh_batch_history(self):
-        """POPULATE BATCH HISTORY TABLE."""
+        """Populate batch history table."""
         if self._main is None or not hasattr(self._main, "store") or self._main.store is None:
             return
 
@@ -299,11 +353,11 @@ class ActionsPage(QWidget):
             )
 
     def _on_action_double_clicked(self, row: int):
-        """SHOW ACTION DETAILS ON DOUBLE CLICK."""
+        """Show action details on double click."""
         pass
 
     def _on_batch_double_clicked(self, row: int):
-        """OPEN BATCHDETAILDIALOG FOR THE DOUBLE-CLICKED BATCH."""
+        """Open batch detail dialog for the double-clicked batch."""
         id_lbl = self.batch_table.item(row, 0)
         if id_lbl is None:
             return
@@ -317,14 +371,14 @@ class ActionsPage(QWidget):
     # EXECUTE / UNDO
 
     def _execute_batch(self):
-        """DELEGATE BATCH EXECUTION TO MAIN WINDOW."""
+        """Delegate batch execution to main window."""
         if self._main is None:
             return
         if hasattr(self._main, "_execute_approved"):
             self._main._execute_approved()
 
     def _undo_last_batch(self):
-        """DELEGATE UNDO TO MAIN WINDOW."""
+        """Delegate undo to main window."""
         if self._main is None:
             return
         if hasattr(self._main, "_undo_last_batch"):

@@ -33,7 +33,7 @@ PLATFORM_PROTECTED_PATTERNS = {
 
 
 def default_protected_patterns(operating_system_name: str | None = None) -> list[str]:
-    # COMBINES COMMON RULES WITH RULES FOR THE CURRENT OPERATING SYSTEM
+    """Combine common rules with rules for the current operating system."""
     detected_operating_system = operating_system_name or platform.system()
     return COMMON_PROTECTED_PATTERNS + PLATFORM_PROTECTED_PATTERNS.get(detected_operating_system, [])
 
@@ -47,7 +47,7 @@ class ScanSettings:
 
 
 def default_application_data_directory(operating_system_name: str | None = None) -> Path:
-    # SELECTS THE NATIVE PER USER DATA LOCATION FOR EACH SUPPORTED PLATFORM
+    """Select the native per-user data location for each supported platform."""
     detected_operating_system = operating_system_name or platform.system()
     if detected_operating_system == "Windows":
         return Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "OpenCoeus"

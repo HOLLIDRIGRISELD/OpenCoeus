@@ -108,7 +108,7 @@ class HomePage(QWidget):
         for p in profiles:
             self.profile_list.addItem(p.name)
 
-    def _on_profile_selected(self, current, prev):
+    def _on_profile_selected(self, current, _prev):
         """SET CURRENT PROFILE WHEN LIST SELECTION CHANGES."""
         if self._main is None:
             return
@@ -118,6 +118,10 @@ class HomePage(QWidget):
         if name == "No profiles yet":
             return
         self._main.current_profile = load_profile_by_name(self._main.store, name)
+        # LOAD RULES FOR THE SELECTED PROFILE
+        if self._main.current_profile and self._main.current_profile.profile_id:
+            self._main.rules_page.set_store(self._main.store)
+            self._main.rules_page.load_rules(self._main.current_profile.profile_id)
 
     def _create_new_profile(self):
         """OPEN PROFILEEDITDIALOG FOR A NEW PROFILE."""

@@ -1,6 +1,7 @@
 """Allow running OpenCoeus as: python -m opencoeus [subcommand]."""
 import sys
 
+
 def main() -> int:
     # IF NO ARGS OR GUI, LAUNCH THE GUI
     if len(sys.argv) <= 1 or sys.argv[1] == "gui":

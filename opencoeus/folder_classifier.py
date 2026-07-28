@@ -49,8 +49,8 @@ def classify_folder(
     compiled_patterns: dict[str, list[re.Pattern]] | None = None,
     custom_patterns: list[str] | None = None,
 ) -> tuple[str, str, str]:
-    # CLASSIFIES A FOLDER AND RETURNS (CLASSIFICATION, RECOMMENDED ACTION, REASON)
-    # CHECKS THE FOLDER NAME AGAINST ALL WELL KNOWN PATTERNS
+    """Classify a folder and return (classification, recommended_action, reason).
+    Checks the folder name against all well-known patterns."""
     folder_name = node.name
     if compiled_patterns is None:
         compiled_patterns = _compile_all_patterns(custom_patterns)
@@ -68,7 +68,7 @@ def classify_folder(
 def _compile_all_patterns(
     custom_patterns: list[str] | None = None,
 ) -> dict[str, list[re.Pattern]]:
-    # COMPILES ALL CATEGORY PATTERNS AND ANY USER PROVIDED CUSTOM PATTERNS INTO REGEX OBJECTS
+    """Compile all category patterns and any user-provided custom patterns into regex objects."""
     compiled = {}
     for category, raw_patterns in _PATTERNS.items():
         compiled[category] = [re.compile(p, re.IGNORECASE) for p in raw_patterns]
@@ -78,7 +78,7 @@ def _compile_all_patterns(
 
 
 def _action_for_category(category: str, node: FolderNode) -> tuple[str, str]:
-    # DETERMINES THE RECOMMENDED ACTION AND EXPLANATION FOR EACH CLASSIFICATION CATEGORY
+    """Determine the recommended action and explanation for each classification category."""
     if category == "system":
         return "exclude", f"System folder '{node.name}' should not be modified."
     if category == "virtual_environment":
@@ -102,7 +102,7 @@ def classify_tree(
     root: FolderNode,
     custom_patterns: list[str] | None = None,
 ) -> list[dict]:
-    # WALKS THE ENTIRE TREE AND CLASSIFIES EVERY FOLDER, RETURNING A LIST OF CLASSIFICATION DICTS
+    """Walk the entire tree and classify every folder, returning a list of classification dicts."""
     compiled = _compile_all_patterns(custom_patterns)
     classifications = []
     _classify_recursive(root, compiled, classifications)
@@ -114,7 +114,7 @@ def _classify_recursive(
     compiled_patterns: dict[str, list[re.Pattern]],
     accumulator: list[dict],
 ) -> None:
-    # CLASSIFIES THE CURRENT NODE AND RECURSIVELY PROCESSES ALL CHILDREN
+    """Classify the current node and recursively process all children."""
     classification, action, reason = classify_folder(node, compiled_patterns)
     node.classification = classification
     node.recommended_action = action

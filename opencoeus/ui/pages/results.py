@@ -23,12 +23,12 @@ from .common import (
     status_badge, truncate_path, fmt_size,
 )
 
-# COLUMN WIDTHS FOR RESULTS TABLE: [Name, Path, Size, Modified, Status, Hash, Group].
-_RESULTS_COL_WIDTHS = [180, 250, 80, 120, 110, 100, 60]
+# COLUMN WIDTHS FOR RESULTS TABLE: [Name, Suggested, Path, Size, Modified, Status, Hash, Group].
+_RESULTS_COL_WIDTHS = [180, 180, 250, 80, 120, 110, 100, 60]
 
 
 class ResultsPage(QWidget):
-    """RESULTS PAGE WITH FILTERING AND DUPLICATE GROUP VIEW."""
+    """Results page with filtering and duplicate group view."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,6 +52,7 @@ class ResultsPage(QWidget):
             "All Files",
             "Duplicates Only",
             "Unique Files",
+            "Has Suggested Title",
             "Duplicate Groups",
         ])
         self.filter_combo.currentIndexChanged.connect(self._filter_results)
@@ -66,7 +67,7 @@ class ResultsPage(QWidget):
 
         # RESULTS TABLE (CARD-BASED).
         self.results_table = CardTable(
-            ["Name", "Path", "Size", "Modified", "Status", "Hash", "Group"],
+            ["Name", "Suggested", "Path", "Size", "Modified", "Status", "Hash", "Group"],
             column_widths=_RESULTS_COL_WIDTHS,
         )
         self.results_table.row_double_clicked.connect(self._on_result_double_clicked)
@@ -87,25 +88,26 @@ class ResultsPage(QWidget):
     # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
-        """STORE REFERENCE TO MAIN WINDOW."""
+        """Store reference to main window."""
         self._main = main
 
     # FILL RESULTS
 
     def fill_results(self, result: ScanResult):
-        """POPULATE RESULTS TABLE WITH COLOR-CODED STATUS."""
+        """Populate results table with color-coded status."""
         self._raw_results = result
         self.results_table.clear()
 
         for entry in result.rows:
             name = entry.suggested_title or os.path.basename(entry.path)
+            suggested = entry.suggested_title if entry.suggested_title and entry.suggested_title != os.path.basename(entry.path) else ""
             self._add_result_row(
-                name, entry.path, entry.size, entry.modified_at,
+                name, suggested, entry.path, entry.size, entry.modified_at,
                 entry.status, entry.sha256, entry.duplicate_of,
             )
 
-    def _add_result_row(self, name, path, size, modified, status, file_hash, group):
-        """ADD A SINGLE ROW TO THE RESULTS TABLE."""
+    def _add_result_row(self, name, suggested, path, size, modified, status, file_hash, group):
+        """Add a single row to the results table."""
         if status == "duplicate":
             badge = status_badge(status.upper(), COLORS['red'], COLORS.get('red_bg', '#3b1518'))
         elif status == "unique":
@@ -118,6 +120,7 @@ class ResultsPage(QWidget):
         self.results_table.addRow(
             widgets=[
                 (name, None),
+                (suggested, None),
                 (truncate_path(path), None),
                 (fmt_size(size), None),
                 (str(modified) if modified else "—", None),
@@ -126,14 +129,14 @@ class ResultsPage(QWidget):
                 (str(group) if group else "", None),
             ],
             tooltips=[
-                name, path, "", "", "", file_hash or "", "",
+                name, suggested, path, "", "", "", file_hash or "", "",
             ],
         )
 
     # ERROR DISPLAY
 
     def show_errors(self, errors: list[str]):
-        """SHOW/HIDE ERROR SECTION."""
+        """Show/hide error section."""
         if not errors:
             self.error_section.hide()
             return
@@ -143,7 +146,7 @@ class ResultsPage(QWidget):
     # FILTERING
 
     def _filter_results(self):
-        """FILTER BY COMBO SELECTION AND SEARCH TEXT."""
+        """Filter by combo selection and search text."""
         if self._raw_results is None:
             return
 
@@ -158,11 +161,14 @@ class ResultsPage(QWidget):
 
         for entry in self._raw_results.rows:
             name = entry.suggested_title or os.path.basename(entry.path)
+            suggested = entry.suggested_title if entry.suggested_title and entry.suggested_title != os.path.basename(entry.path) else ""
 
             # APPLY FILTER.
             if filter_text == "Duplicates Only" and entry.status != "duplicate":
                 continue
             if filter_text == "Unique Files" and entry.status != "unique":
+                continue
+            if filter_text == "Has Suggested Title" and not entry.suggested_title:
                 continue
 
             # APPLY SEARCH.
@@ -170,12 +176,12 @@ class ResultsPage(QWidget):
                 continue
 
             self._add_result_row(
-                name, entry.path, entry.size, entry.modified_at,
+                name, suggested, entry.path, entry.size, entry.modified_at,
                 entry.status, entry.sha256, entry.duplicate_of,
             )
 
     def _show_duplicate_groups(self, search_text: str):
-        """GROUP DUPLICATES BY ORIGINAL FILE."""
+        """Group duplicates by original file."""
         if self._raw_results is None:
             return
 
@@ -196,6 +202,7 @@ class ResultsPage(QWidget):
             if original is None:
                 continue
             name = original.suggested_title or os.path.basename(original.path)
+            suggested = original.suggested_title if original.suggested_title and original.suggested_title != os.path.basename(original.path) else ""
             dup_count = len(entries) - 1
 
             # APPLY SEARCH.
@@ -204,6 +211,7 @@ class ResultsPage(QWidget):
 
             self._add_result_row(
                 f"{name} (+{dup_count} copies)",
+                suggested,
                 original.path, original.size, original.modified_at,
                 f"{dup_count} duplicates", original.sha256, original.duplicate_of,
             )
@@ -211,8 +219,8 @@ class ResultsPage(QWidget):
     # DOUBLE CLICK TO OPEN FILE
 
     def _on_result_double_clicked(self, row: int):
-        """OPEN FILE IN DEFAULT APPLICATION ON DOUBLE-CLICK."""
-        path_lbl = self.results_table.item(row, 1)
+        """Open file in default application on double-click."""
+        path_lbl = self.results_table.item(row, 2)
         if path_lbl is None:
             return
         full_path = path_lbl.toolTip() or path_lbl.text()

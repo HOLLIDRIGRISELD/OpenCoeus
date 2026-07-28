@@ -16,6 +16,7 @@ from ..theme import COLORS, dialog_stylesheet, text_button_qss
 
 
 class BatchDetailDialog(QDialog):
+
     def __init__(self, store: AuditStore, batch_id: int,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)

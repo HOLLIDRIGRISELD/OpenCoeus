@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -13,22 +14,21 @@ from PyQt6.QtWidgets import (
 from ..theme import COLORS, accent_button_qss, text_button_qss, warning_button_qss, danger_button_qss
 from ...database import AuditStore
 from ..dialogs import RuleEditDialog
-from .common import make_table, make_container, section_title
+from .common import CardTable, make_container, section_title
 
 
-DEFAULT_RULES = [
-    {"name": "Move duplicates to archive", "action": "move", "condition": "size > 1MB"},
-    {"name": "Delete old temporary files", "action": "delete", "condition": "age > 30 days"},
-]
+# COLUMN WIDTHS FOR RULES TABLE: [ID, Name, Type, Action, Template, Enabled, Priority].
+_RULES_COL_WIDTHS = [40, 140, 80, 80, 180, 70, 60]
 
 
 class RulesPage(QWidget):
-    """ORGANIZATION RULES PAGE WITH CRUD OPERATIONS."""
+    """Organization rules page with crud operations."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._main = None
         self._store: AuditStore | None = None
+        self._all_rules: list = []
 
         # ROOT LAYOUT
         root = QVBoxLayout(self)
@@ -68,10 +68,10 @@ class RulesPage(QWidget):
         toolbar.addStretch()
         root.addLayout(toolbar)
 
-        # RULES TABLE
-        self.rules_table = make_table(
-            ["ID", "Name", "Action", "Condition", "Enabled", "Priority"],
-            stretch_column=1,
+        # RULES TABLE (CARD-BASED)
+        self.rules_table = CardTable(
+            ["ID", "Name", "Type", "Action", "Template", "Enabled", "Priority"],
+            column_widths=_RULES_COL_WIDTHS,
         )
         root.addWidget(make_container(self.rules_table))
 
@@ -80,19 +80,19 @@ class RulesPage(QWidget):
     # MAIN WINDOW REFERENCE
 
     def set_main(self, main):
-        """STORE REFERENCE TO MAIN WINDOW."""
+        """Store reference to main window."""
         self._main = main
 
     # STORE REFERENCE
 
     def set_store(self, store: AuditStore):
-        """SET THE AUDITSTORE REFERENCE."""
+        """Set the auditstore reference."""
         self._store = store
 
     # LOAD RULES
 
     def load_rules(self, profile_id):
-        """LOAD RULES FROM DATABASE, FALL BACK TO DEFAULT_RULES."""
+        """Load rules from database, fall back to default rules."""
         if self._store is not None:
             enabled_rules = self._store.get_enabled_rules(profile_id)
             all_rules = self._store.get_rules(profile_id)
@@ -101,104 +101,143 @@ class RulesPage(QWidget):
                 self.refresh_table()
                 return
 
+        from ...rules_engine import DEFAULT_RULES
         self._all_rules = DEFAULT_RULES[:]
         self.refresh_table()
 
     # REFRESH TABLE
 
     def refresh_table(self):
-        """POPULATE RULES TABLE FROM LOADED RULES."""
-        rules = getattr(self, "_all_rules", [])
-        self.rules_table.setSortingEnabled(False)
-        self.rules_table.setRowCount(len(rules))
+        """Populate rules table from loaded rules."""
+        rules = self._all_rules
+        self.rules_table.clear()
 
-        for r, rule in enumerate(rules):
-            rule_id = str(rule.get("id", ""))
-            name = rule.get("name", "")
-            action = rule.get("action", "")
-            condition = rule.get("condition", "")
-            enabled = "Yes" if rule.get("enabled", True) else "No"
-            priority = str(rule.get("priority", ""))
-
-            self.rules_table.setItem(r, 0, QTableWidgetItem(rule_id))
-            self.rules_table.setItem(r, 1, QTableWidgetItem(name))
-            self.rules_table.setItem(r, 2, QTableWidgetItem(action))
-            self.rules_table.setItem(r, 3, QTableWidgetItem(condition))
-
-            enabled_item = QTableWidgetItem(enabled)
-            if enabled == "No":
-                enabled_item.setForeground(self._color("text2", "#7f848e"))
+        for rule in rules:
+            # SUPPORT BOTH ORM OBJECTS AND DICTS
+            if hasattr(rule, "id"):
+                rule_id = str(rule.id)
+                name = rule.name
+                rule_type = rule.rule_type
+                action_type = getattr(rule, "action_type", "move")
+                template = rule.destination_template or getattr(rule, "rename_template", "") or ""
+                enabled = "Yes" if rule.enabled else "No"
+                priority = str(rule.priority)
             else:
-                enabled_item.setForeground(self._color("green", "#98c379"))
-            self.rules_table.setItem(r, 4, enabled_item)
+                rule_id = str(rule.get("id", ""))
+                name = rule.get("name", "")
+                rule_type = rule.get("rule_type", "")
+                action_type = rule.get("action_type", "move")
+                template = rule.get("destination_template", "") or rule.get("rename_template", "")
+                enabled = "Yes" if rule.get("enabled", True) else "No"
+                priority = str(rule.get("priority", ""))
 
-            self.rules_table.setItem(r, 5, QTableWidgetItem(priority))
+            # COLOR CODE ACTION TYPE
+            action_label = action_type.upper()
+            if action_type == "rename":
+                action_color = COLORS.get("accent", "#38bdf8")
+            elif action_type == "move+rename":
+                action_color = COLORS.get("purple", "#a78bfa")
+            else:
+                action_color = COLORS.get("text", "#e2e8f0")
 
-        self.rules_table.setSortingEnabled(True)
+            # COLOR CODE ENABLED STATUS
+            enabled_color = COLORS.get("green", "#4ade80") if enabled == "Yes" else COLORS.get("text2", "#7f848e")
+
+            self.rules_table.addRow(
+                widgets=[
+                    (rule_id, None),
+                    (name, None),
+                    (rule_type, None),
+                    (action_label, self._colored_label(action_label, action_color)),
+                    (template, None),
+                    (enabled, self._colored_label(enabled, enabled_color)),
+                    (priority, None),
+                ],
+                tooltips=[name, "", action_type, template, "", "", ""],
+            )
+
+    @staticmethod
+    def _colored_label(text: str, color: str) -> QLabel:
+        """Create a colored label for table cells."""
+        label = QLabel(text)
+        label.setStyleSheet(f"color: {color}; font-size: 12px;")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return label
 
     # ADD RULE
 
     def _add_rule(self):
-        """OPEN RULEEDITDIALOG AND SAVE TO DB."""
+        """Open rule edit dialog and save to db."""
         dialog = RuleEditDialog(self)
         if dialog.exec():
             rule = dialog.get_data()
-            if self._store is not None:
-                self._store.add_rule(rule)
-            if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
-                self.load_rules(self._main.current_profile.profile_id)
+            if self._store is not None and self._main is not None:
+                profile_id = getattr(getattr(self._main, "current_profile", None), "profile_id", 1)
+                self._store.add_rule(profile_id, rule)
+                self.load_rules(profile_id)
 
     # EDIT RULE
 
     def _edit_rule(self):
-        """OPEN RULEEDITDIALOG WITH THE SELECTED RULE AND UPDATE IN DB."""
-        selected = self.rules_table.selectionModel().selectedRows()
+        """Open rule edit dialog with the selected rule and update in db."""
+        selected = self.rules_table.selectedRows()
         if not selected:
             return
 
-        row = selected[0].row()
-        rules = getattr(self, "_all_rules", [])
-        if row >= len(rules):
+        row = selected[0]
+        if row >= len(self._all_rules):
             return
 
-        rule = rules[row]
-        dialog = RuleEditDialog(self, rule=rule)
+        rule = self._all_rules[row]
+        # CONVERT ORM OBJECT TO DICT FOR THE DIALOG
+        if hasattr(rule, "id"):
+            rule_dict = {
+                "id": rule.id, "name": rule.name, "rule_type": rule.rule_type,
+                "rule_config": rule.rule_config, "destination_template": rule.destination_template,
+                "priority": rule.priority, "enabled": rule.enabled,
+                "action_type": getattr(rule, "action_type", "move"),
+                "rename_template": getattr(rule, "rename_template", ""),
+            }
+        else:
+            rule_dict = rule
+        dialog = RuleEditDialog(self, rule=rule_dict)
         if dialog.exec():
             updated = dialog.get_data()
-            if self._store is not None and "id" in rule:
-                self._store.update_rule(rule["id"], updated)
-            if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
+            if self._store is not None and hasattr(rule, "id"):
+                self._store.update_rule(rule.id, **updated)
+            elif self._store is not None and "id" in rule:
+                self._store.update_rule(rule["id"], **updated)
+            if self._main is not None and hasattr(self._main, "current_profile") and self._main.current_profile:
                 self.load_rules(self._main.current_profile.profile_id)
 
     # TOGGLE RULE
 
     def _toggle_rule(self):
-        """TOGGLE ENABLED/DISABLED IN DB."""
-        selected = self.rules_table.selectionModel().selectedRows()
+        """Toggle enabled/disabled in db."""
+        selected = self.rules_table.selectedRows()
         if not selected:
             return
 
         if self._store is None:
             return
 
-        rules = getattr(self, "_all_rules", [])
-        for idx in selected:
-            row = idx.row()
-            if row >= len(rules):
+        for row in selected:
+            if row >= len(self._all_rules):
                 continue
-            rule = rules[row]
-            if "id" in rule:
-                new_state = not rule.get("enabled", True)
-                self._store.toggle_rule(rule["id"], new_state)
+            rule = self._all_rules[row]
+            rule_id = rule.id if hasattr(rule, "id") else rule.get("id")
+            if rule_id is not None:
+                current_enabled = rule.enabled if hasattr(rule, "enabled") else rule.get("enabled", True)
+                self._store.toggle_rule(rule_id, not current_enabled)
 
-        if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
+        if self._main is not None and hasattr(self._main, "current_profile") and self._main.current_profile:
             self.load_rules(self._main.current_profile.profile_id)
 
     # DELETE RULE
 
     def _delete_rule(self):
-        """DELETE SELECTED RULES FROM DB."""
-        selected = self.rules_table.selectionModel().selectedRows()
+        """Delete selected rules from db."""
+        selected = self.rules_table.selectedRows()
         if not selected:
             return
 
@@ -214,25 +253,13 @@ class RulesPage(QWidget):
         if self._store is None:
             return
 
-        rules = getattr(self, "_all_rules", [])
-        for idx in selected:
-            row = idx.row()
-            if row >= len(rules):
+        for row in selected:
+            if row >= len(self._all_rules):
                 continue
-            rule = rules[row]
-            if "id" in rule:
-                self._store.delete_rule(rule["id"])
+            rule = self._all_rules[row]
+            rule_id = rule.id if hasattr(rule, "id") else rule.get("id")
+            if rule_id is not None:
+                self._store.delete_rule(rule_id)
 
-        if self._main is not None and hasattr(self._main, "current_profile") and hasattr(self._main.current_profile, "profile_id"):
+        if self._main is not None and hasattr(self._main, "current_profile") and self._main.current_profile:
             self.load_rules(self._main.current_profile.profile_id)
-
-    # HELPERS
-
-    @staticmethod
-    def _color(key: str, default: str) -> QColor:
-        """GET COLOR FROM THEME OR FALLBACK."""
-        try:
-            from ..theme import COLORS as _C
-            return QColor(_C.get(key, default))
-        except ImportError:
-            return QColor(default)

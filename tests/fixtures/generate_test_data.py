@@ -155,32 +155,62 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _escape_pdf_string(text: str) -> str:
+    # ESCAPES SPECIAL CHARACTERS FOR PDF STRING LITERALS
+    result = text.replace("\\", "\\\\")
+    result = result.replace("(", "\\(")
+    result = result.replace(")", "\\)")
+    return result
+
+
+def _make_pdf_with_text(content_lines: list[str]) -> bytes:
+    # BUILDS A MINIMAL VALID PDF WITH TEXT EMBEDDED IN THE PAGE CONTENT STREAM
+    # TEXT IS EXTRACTABLE BY PYPDF PdfReader.extract_text()
+    line_data = b""
+    for line_index, line in enumerate(content_lines):
+        escaped = _escape_pdf_string(line).encode("latin-1", errors="replace")
+        line_data += b"72 " + str(700 - 14 * line_index).encode() + b" Td\n"
+        line_data += b"(" + escaped + b") Tj\n"
+    stream_data = b"BT\n/F1 12 Tf\n" + line_data + b"ET\n"
+    stream_len = len(stream_data)
+    pdf_body = (
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]"
+        b"\n   /Contents 4 0 R\n   /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
+        b"4 0 obj\n<< /Length " + str(stream_len).encode() + b" >>\nstream\n" + stream_data + b"\nendstream\nendobj\n"
+        b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+    )
+    body_bytes = pdf_body
+    header = b"%PDF-1.4\n"
+    xref = b"xref\n0 6\n0000000000 65535 f \n"
+    for idx in range(5):
+        obj_start = body_bytes.find(b"%d 0 obj" % (idx + 1))
+        actual_offset = len(header) + obj_start
+        xref += f"{actual_offset:010d} 00000 n \n".encode()
+    pdf_bytes = (
+        header + body_bytes + xref +
+        b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" +
+        str(len(header) + len(body_bytes)).encode() + b"\n%%EOF\n"
+    )
+    return pdf_bytes
+
+
 def _create_documents(folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
 
-# PDF WITH READABLE TEXT USING PYPDF
+# PDF WITH EXTRACTABLE TEXT IN PAGE CONTENT STREAM
     try:
-        from pypdf import PdfWriter
-        writer = PdfWriter()
-        writer.add_blank_page(width=612, height=792)
-        # ADD ANNOTATIONS WITH TEXT CONTENT
-        from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, TextStringObject
-        annot = DictionaryObject()
-        annot[NameObject("/Type")] = NameObject("/Annot")
-        annot[NameObject("/Subtype")] = NameObject("/Widget")
-        annot[NameObject("/FT")] = NameObject("/Tx")
-        annot[NameObject("/V")] = TextStringObject(
-            "Invoice #INV-2024-0315\n"
-            "Date: March 15, 2024\n"
-            "From: Acme Corporation\n"
-            "Amount: $1,250.00\n"
-            "Description: Quarterly consulting services\n"
-            "Payment terms: Net 30"
-        )
-        buf = io.BytesIO()
-        writer.write(buf)
-        buf.seek(0)
-        (folder / "invoice_march_2024.pdf").write_bytes(buf.read())
+        from pypdf import PdfReader
+        pdf_bytes = _make_pdf_with_text([
+            "Invoice #INV-2024-0315",
+            "Date: March 15, 2024",
+            "From: Acme Corporation",
+            "Amount: $1,250.00",
+            "Description: Quarterly consulting services",
+            "Payment terms: Net 30",
+        ])
+        (folder / "invoice_march_2024.pdf").write_bytes(pdf_bytes)
     except ImportError:
         # FALLBACK: WRITE A TEXT FILE WITH .PDF EXTENSION
         _write_text(
@@ -601,6 +631,39 @@ def _create_old_files(root: Path) -> None:
     os.utime(str(root / "legacy_data_2021.csv"), (old_time_2021, old_time_2021))
 
 
+def _create_screenshots(folder: Path) -> None:
+    # SCREENSHOTS FOLDER FOR RULE 14 YEAR PREFIX SCREENSHOTS RENAME
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "screen_capture_2024_01_15.png").write_bytes(PNG_1X1)
+    (folder / "screen_capture_2024_03_22.png").write_bytes(PNG_1X1)
+    (folder / "desktop_screenshot.jpg").write_bytes(JPEG_1X1)
+
+
+def _create_root_spreadsheets(root: Path) -> None:
+    # ROOT LEVEL SPREADSHEETS FOR RULE 16 DATE PREFIX REPORTS RENAME
+    try:
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sales"
+        ws.append(["Product", "Q1", "Q2", "Q3", "Q4"])
+        ws.append(["Widget A", 100, 120, 110, 130])
+        ws.append(["Widget B", 200, 180, 210, 190])
+        wb.save(str(root / "sales_report_2025.xlsx"))
+    except ImportError:
+        _write_text(
+            root / "sales_report_2025.xlsx",
+            "Product,Q1,Q2,Q3,Q4\nWidget A,100,120,110,130\nWidget B,200,180,210,190",
+        )
+    _write_text(
+        root / "annual_summary.csv",
+        "Month,Revenue,Expenses,Profit\n"
+        "Jan,50000,35000,15000\n"
+        "Feb,52000,34000,18000\n"
+        "Mar,48000,36000,12000\n",
+    )
+
+
 def _create_edge_cases(root: Path) -> None:
     # RANDOM BINARY DATA
     (root / "mixed_file.bin").write_bytes(bytes(range(256)) * 4)
@@ -637,6 +700,9 @@ def create_test_data(root: Path = Path("D:/test-data")) -> None:
     _create_code(root / "Code")
     print("  [+] Code/ (6 files: PY, JS, CSS, HTML, JSON, YAML)")
 
+    _create_screenshots(root / "Screenshots")
+    print("  [+] Screenshots/ (3 files: 2x PNG, JPG)")
+
     _create_music(root / "Music")
     print("  [+] Music/ (3 files: MP3, WAV, FLAC)")
 
@@ -663,6 +729,9 @@ def create_test_data(root: Path = Path("D:/test-data")) -> None:
 
     _create_edge_cases(root)
     print("  [+] Edge cases (binary, spaces, unicode, long name, empty)")
+
+    _create_root_spreadsheets(root)
+    print("  [+] Root spreadsheets (XLSX, CSV) for Rule 16 date prefix rename")
 
     # COUNT TOTAL FILES
     total = sum(1 for _ in root.rglob("*") if _.is_file())

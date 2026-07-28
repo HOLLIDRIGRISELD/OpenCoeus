@@ -14,6 +14,7 @@ from ..theme import COLORS, dialog_stylesheet, text_button_qss
 
 
 class AboutDialog(QDialog):
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("About OpenCoeus")

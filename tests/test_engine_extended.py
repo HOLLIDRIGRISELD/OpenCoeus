@@ -66,8 +66,8 @@ class WriteManifestTests(unittest.TestCase):
             self.assertEqual(rows[1]["path"], "/b.txt")
             self.assertEqual(rows[1]["status"], "duplicate")
 
-    def test_csv_has_ten_columns(self):
-        # VERIFIES THAT THE CSV OUTPUT CONTAINS EXACTLY TEN COLUMNS.
+    def test_csv_has_expected_columns(self):
+        # VERIFIES THAT THE CSV OUTPUT CONTAINS ALL EXPECTED COLUMNS INCLUDING doc_type.
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_path = Path(temporary_directory) / "test_manifest.csv"
             result = ScanResult()
@@ -78,6 +78,8 @@ class WriteManifestTests(unittest.TestCase):
                 self.assertEqual(reader.fieldnames, [
                     "path", "size", "sha256", "status", "duplicate_of", "suggested_title",
                     "relative_path", "extension", "modified_at", "folder_path",
+                    "size_kb", "size_mb", "date_iso", "date_month", "date_day", "date_full",
+                    "doc_type",
                 ])
 
     def test_empty_result_produces_header_only_csv(self):

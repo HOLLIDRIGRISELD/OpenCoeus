@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -9,11 +10,13 @@ from pathlib import Path
 
 from .engine import ManifestRow
 from .profiles import ProfileConfig
+from .safety import is_valid_filename
 
 
 # DEFAULT RULES
 
 DEFAULT_RULES = [
+    # STAGE 1 AND 2: EXISTING MOVE RULES
     {"id": 1, "name": "Documents", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".pdf", ".docx", ".doc", ".pptx", ".txt", ".rtf", ".odt", ".md"]}',
      "destination_template": "{root}/Documents/{filename}", "action_type": "move"},
@@ -47,6 +50,36 @@ DEFAULT_RULES = [
     {"id": 11, "name": "Spreadsheets", "rule_type": "extension", "enabled": True, "priority": 10,
      "rule_config": '{"extensions": [".csv", ".xlsx", ".xls"]}',
      "destination_template": "{root}/Spreadsheets/{filename}", "action_type": "move"},
+    # STAGE 4: DEFAULT RENAME RULES
+    {"id": 12, "name": "Rename docs by title", "rule_type": "extension", "enabled": True, "priority": 20,
+     "rule_config": '{"extensions": [".pdf", ".docx"]}',
+     "destination_template": "", "action_type": "rename",
+     "rename_template": "{date_iso}_{doc_type}_{title_sanitized}.{extension}"},
+    {"id": 14, "name": "Year prefix screenshots", "rule_type": "folder", "enabled": True, "priority": 20,
+     "rule_config": '{"folders": ["screenshots", "Screenshots", "screen_shots"]}',
+     "destination_template": "", "action_type": "rename",
+     "rename_template": "{date_year}_Screenshot_{filename}"},
+    {"id": 13, "name": "Date prefix photos", "rule_type": "extension", "enabled": True, "priority": 20,
+     "rule_config": '{"extensions": [".jpg", ".jpeg", ".png", ".gif", ".heic"]}',
+     "destination_template": "", "action_type": "rename",
+     "rename_template": "{date_iso}_{filename}"},
+    {"id": 16, "name": "Date prefix reports", "rule_type": "extension", "enabled": True, "priority": 20,
+     "rule_config": '{"extensions": [".xlsx", ".csv"]}',
+     "destination_template": "", "action_type": "rename",
+     "rename_template": "{date_iso}_{doc_type}_{stem}.{extension}"},
+    {"id": 15, "name": "Docs move and rename by title", "rule_type": "extension", "enabled": True, "priority": 15,
+     "rule_config": '{"extensions": [".pdf", ".docx", ".txt", ".md"]}',
+     "destination_template": "{root}/Documents/{date_iso}_{doc_type}_{title_sanitized}.{extension}",
+     "action_type": "move+rename", "rename_template": "{date_iso}_{doc_type}_{title_sanitized}.{extension}"},
+    # STAGE 4 EXTENSION: NORMALIZATION RENAME RULES
+    {"id": 17, "name": "Lowercase text files", "rule_type": "extension", "enabled": True, "priority": 25,
+     "rule_config": '{"extensions": [".txt", ".md"]}',
+     "destination_template": "", "action_type": "rename",
+     "rename_template": "{stem_lower}.{extension}"},
+    {"id": 18, "name": "Replace spaces with hyphens", "rule_type": "pattern", "enabled": True, "priority": 30,
+     "rule_config": '{"patterns": ["* *"]}',
+     "destination_template": "", "action_type": "rename",
+     "rename_template": "{filename_nospace}"},
 ]
 
 
@@ -58,11 +91,15 @@ class RuleMatch:
     action_type: str
     rule_id: int | None = None
     reason: str = ""
+    # STAGE 4: RENAME SPECIFIC FIELDS
+    original_filename: str = ""
+    new_filename: str = ""
 
 
 class RulesEngine:
     # DETERMINISTIC RULES ENGINE THAT PROPOSES FILE ACTIONS WITHOUT AI
-    # APPLIES EXTENSION, PATTERN, DATE, SIZE, AND FOLDER BASED RULES IN PRIORITY ORDER
+    # APPLIES EXTENSION PATTERN DATE SIZE AND FOLDER BASED RULES IN PRIORITY ORDER
+    # NOW SUPPORTS RENAME AND MOVE AND RENAME ACTION TYPES
 
     def __init__(self, profile: ProfileConfig, scan_root: str = "") -> None:
         self.profile = profile
@@ -82,20 +119,12 @@ class RulesEngine:
                     prepared["_parsed_config"] = {}
             else:
                 prepared["_parsed_config"] = prepared.get("rule_config", {})
-            # PRE COMPILE REGEX PATTERNS AND EXTENSION SETS FOR PERFORMANCE
+            # PRE COMPILE EXTENSION SETS FOR PERFORMANCE
             config = prepared["_parsed_config"]
-            if "patterns" in config:
-                prepared["_compiled_patterns"] = [
-                    re.compile(p, re.IGNORECASE) for p in config["patterns"]
-                ]
             if "extensions" in config:
                 prepared["_compiled_extensions"] = {
                     ext.lower() for ext in config["extensions"]
                 }
-            if "folders" in config:
-                prepared["_compiled_folders"] = [
-                    re.compile(p, re.IGNORECASE) for p in config["folders"]
-                ]
             prepared_rules.append(prepared)
         sorted_rules = sorted(prepared_rules, key=lambda r: r.get("priority", 0))
         profile_excluded = set(self.profile.excluded_folders) if self.profile else set()
@@ -105,12 +134,14 @@ class RulesEngine:
             if row.status in {"unreadable", "protected"}:
                 continue
             if profile_excluded and any(
-                row.folder_path == ex or row.folder_path.startswith(ex + os.sep)
+                row.folder_path.replace("\\", "/") == ex.replace("\\", "/").rstrip("/")
+                or row.folder_path.replace("\\", "/").startswith(ex.replace("\\", "/").rstrip("/") + "/")
                 for ex in profile_excluded
             ):
                 continue
             if profile_included and not any(
-                row.folder_path == inc or row.folder_path.startswith(inc + os.sep)
+                row.folder_path.replace("\\", "/") == inc.replace("\\", "/").rstrip("/")
+                or row.folder_path.replace("\\", "/").startswith(inc.replace("\\", "/").rstrip("/") + "/")
                 for inc in profile_included
             ):
                 continue
@@ -120,9 +151,54 @@ class RulesEngine:
                 if self._rule_matches(row, rule):
                     match = self._apply_rule(row, rule)
                     if match is not None:
-                        if match.proposed_path != match.original_path:
+                        if Path(match.proposed_path) != Path(match.original_path):
                             matches.append(match)
+                            break
+        # NORMALIZATION PASS: APPLY RULES WITH PRIORITY >= 25 TO EXISTING MATCHES
+        # SO THAT NORMALIZATION (LOWERCASE REPLACE SPACES) APPLIES EVEN TO FILES
+        # ALREADY CAUGHT BY HIGHER PRIORITY CONTENT RULES
+        normalization_rules = [r for r in sorted_rules if r.get("enabled", True) and r.get("priority", 0) >= 25]
+        if normalization_rules:
+            match_lookup = {m.original_path: m for m in matches}
+            for row in manifest_rows:
+                match = match_lookup.get(row.path)
+                if match is None:
+                    continue
+                for rule in normalization_rules:
+                    if not self._rule_matches(row, rule):
+                        continue
+                    rename_tpl = rule.get("rename_template", "")
+                    if not rename_tpl:
+                        continue
+                    new_filename = self._render_rename(row, rename_tpl)
+                    if new_filename and new_filename != Path(match.proposed_path).name:
+                        match.new_filename = new_filename
+                        if match.action_type == "rename":
+                            match.proposed_path = str(Path(match.original_path).parent / new_filename).replace("\\", "/")
+                        else:
+                            move_parent = str(Path(match.proposed_path).parent).replace("\\", "/")
+                            match.proposed_path = f"{move_parent}/{new_filename}"
                         break
+        # COLLISION DETECTION: CHECK EACH PROPOSED RENAME AGAINST OTHER SCANNED FILES
+        # AND EXISTING FILESYSTEM TO SHOW THE ACTUAL DESTINATION PATH IN PREVIEW
+        existing_for_collision: set[str] = set()
+        for row in manifest_rows:
+            existing_for_collision.add(row.path)
+        for match in matches:
+            if match.action_type in {"rename", "move+rename"}:
+                proposed = Path(match.proposed_path)
+                if proposed.exists() or str(proposed) in existing_for_collision:
+                    counter = 2
+                    while True:
+                        candidate = proposed.parent / f"{proposed.stem} ({counter}){proposed.suffix}"
+                        candidate_str = str(candidate)
+                        if not candidate.exists() and candidate_str not in existing_for_collision:
+                            match.proposed_path = candidate_str.replace("\\", "/")
+                            match.new_filename = candidate.name
+                            break
+                        counter += 1
+                else:
+                    existing_for_collision.add(match.proposed_path)
         return matches
 
     def _rule_matches(self, row: ManifestRow, rule: dict) -> bool:
@@ -153,15 +229,26 @@ class RulesEngine:
         config = rule.get("_parsed_config", {})
         return row.extension.lower() in {e.lower() for e in config.get("extensions", [])}
 
+    def _glob_or_regex_match(self, target: str, patterns: list[str]) -> bool:
+        """Match target against patterns supporting both glob (*?) and regex syntax."""
+        for pattern in patterns:
+            has_glob = any(c in pattern for c in ("*", "?"))
+            has_regex = bool(set("^$()+{}|\\[]") & set(pattern))
+            if has_glob and not has_regex:
+                if fnmatch.fnmatch(target, pattern):
+                    return True
+            else:
+                try:
+                    if re.search(pattern, target, re.IGNORECASE):
+                        return True
+                except re.error:
+                    pass
+        return False
+
     def _matches_pattern(self, row: ManifestRow, rule: dict) -> bool:
-        # CHECKS WHETHER THE FILENAME MATCHES ANY OF THE RULE REGEX PATTERNS
-        compiled = rule.get("_compiled_patterns")
-        filename = Path(row.path).name
-        if compiled is not None:
-            return any(p.search(filename) for p in compiled)
+        """Check whether the filename matches any of the rule patterns."""
         config = rule.get("_parsed_config", {})
-        patterns = config.get("patterns", [])
-        return any(re.search(pattern, filename, re.IGNORECASE) for pattern in patterns)
+        return self._glob_or_regex_match(Path(row.path).name, config.get("patterns", []))
 
     def _matches_date(self, row: ManifestRow, config: dict) -> bool:
         # CHECKS WHETHER THE FILE MODIFICATION DATE FALLS WITHIN THE RULE DATE RANGE
@@ -194,50 +281,78 @@ class RulesEngine:
         return min_bytes <= row.size <= max_bytes
 
     def _matches_folder(self, row: ManifestRow, rule: dict) -> bool:
-        # CHECKS WHETHER THE FILE FOLDER PATH MATCHES ANY OF THE RULE FOLDER PATTERNS
-        compiled = rule.get("_compiled_folders")
-        if compiled is not None:
-            return any(p.search(row.folder_path) for p in compiled)
+        """Check whether the file folder path matches any of the rule folder patterns."""
         config = rule.get("_parsed_config", {})
-        folder_patterns = config.get("folders", [])
-        return any(
-            re.search(pattern, row.folder_path, re.IGNORECASE)
-            for pattern in folder_patterns
-        )
+        if self._glob_or_regex_match(Path(row.folder_path).name, config.get("folders", [])):
+            return True
+        return self._glob_or_regex_match(row.folder_path, config.get("folders", []))
 
     def _matches_status(self, row: ManifestRow, config: dict) -> bool:
         # CHECKS WHETHER THE FILE STATUS MATCHES THE RULE REQUIRED STATUS VALUE
         return row.status == config.get("status", "")
 
     def _apply_rule(self, row: ManifestRow, rule: dict) -> RuleMatch | None:
-        # APPLIES A MATCHING RULE AND RETURNS A RULE MATCH WITH THE PROPOSED DESTINATION PATH
+        # APPLIES A MATCHING RULE AND RETURNS A RULE MATCH WITH THE PROPOSED ACTION
+        # HANDLES MOVE RENAME AND MOVE AND RENAME ACTION TYPES
+        action_type = rule.get("action_type", "move")
+        original_filename = Path(row.path).name
+        if action_type == "rename":
+            # RENAME ONLY: RENDER NEW FILENAME IN THE SAME DIRECTORY
+            rename_template = rule.get("rename_template", "")
+            if not rename_template:
+                return None
+            new_filename = self._render_rename(row, rename_template)
+            if not new_filename or new_filename == original_filename:
+                return None
+            proposed_path = str(Path(row.path).parent / new_filename).replace("\\", "/")
+            return RuleMatch(
+                original_path=row.path,
+                proposed_path=proposed_path,
+                action_type=action_type,
+                rule_id=rule.get("id"),
+                reason=f"Matched rule '{rule.get('name', 'unknown')}' ({rule.get('rule_type', 'unknown')})",
+                original_filename=original_filename,
+                new_filename=new_filename,
+            )
+        if action_type == "move+rename":
+            # MOVE AND RENAME: RENDER BOTH DESTINATION AND NEW FILENAME
+            destination_template = rule.get("destination_template", "")
+            rename_template = rule.get("rename_template", "")
+            if not destination_template:
+                return None
+            proposed_path = self._render_destination(row, destination_template)
+            new_filename = self._render_rename(row, rename_template) if rename_template else original_filename
+            # APPLY THE RENAME TO THE DESTINATION PATH SO THE FILE ACTUALLY GETS RENAMED
+            if new_filename and new_filename != original_filename:
+                proposed_path = str(Path(proposed_path).parent / new_filename).replace("\\", "/")
+            return RuleMatch(
+                original_path=row.path,
+                proposed_path=proposed_path,
+                action_type=action_type,
+                rule_id=rule.get("id"),
+                reason=f"Matched rule '{rule.get('name', 'unknown')}' ({rule.get('rule_type', 'unknown')})",
+                original_filename=original_filename,
+                new_filename=new_filename,
+            )
+        # DEFAULT: MOVE ONLY
         destination_template = rule.get("destination_template", "")
         if not destination_template:
             return None
         proposed_path = self._render_destination(row, destination_template)
-        action_type = rule.get("action_type", "move")
         return RuleMatch(
             original_path=row.path,
             proposed_path=proposed_path,
             action_type=action_type,
             rule_id=rule.get("id"),
             reason=f"Matched rule '{rule.get('name', 'unknown')}' ({rule.get('rule_type', 'unknown')})",
+            original_filename=original_filename,
+            new_filename=Path(proposed_path).name if proposed_path else "",
         )
 
     def _render_destination(self, row: ManifestRow, template: str) -> str:
         # RENDERS A DESTINATION PATH TEMPLATE BY SUBSTITUTING FILE METADATA PLACEHOLDERS
-        filename = Path(row.path).name
-        stem = Path(row.path).stem
-        extension = row.extension
-        folder = row.folder_path
-        result = template
-        result = result.replace("{filename}", filename)
-        result = result.replace("{stem}", stem)
-        result = result.replace("{extension}", extension.lstrip("."))
-        result = result.replace("{folder}", folder)
-        result = result.replace("{root}", self.scan_root)
-        date_year = row.modified_at[:4] if row.modified_at and len(row.modified_at) >= 4 else "unknown"
-        result = result.replace("{date_year}", date_year)
+        # SUPPORTS ALL 14 TEMPLATE VARIABLES INCLUDING STAGE 4 ADDITIONS
+        result = self._substitute_variables(row, template)
         # PREVENT PATH TRAVERSAL: ENSURE THE RESULT STAYS WITHIN THE SCAN ROOT
         if self.scan_root:
             try:
@@ -247,4 +362,64 @@ class RulesEngine:
                     return row.path
             except (ValueError, OSError):
                 return row.path
+        return result
+
+    def _render_rename(self, row: ManifestRow, template: str) -> str:
+        # RENDERS A FILENAME ONLY TEMPLATE BY SUBSTITUTING FILE METADATA PLACEHOLDERS
+        # STRIPS DIRECTORY COMPONENTS FROM THE RESULT TO PREVENT DIRECTORY TRAVERSAL
+        # VALIDATES OS FILENAME CONSTRAINTS AND SANITIZES IF NEEDED
+        result = self._substitute_variables(row, template)
+        result = Path(result).name
+        valid, _reason = is_valid_filename(result)
+        if not valid:
+            safe_name = re.sub(r'[<>:"/\\|?*]', "-", result).strip(" .-")
+            safe_name = safe_name[:250]
+            stem, ext = Path(safe_name).stem, Path(safe_name).suffix or Path(result).suffix
+            result = f"{stem}{ext}"
+        return result
+
+    def _substitute_variables(self, row: ManifestRow, template: str) -> str:
+        # SHARED TEMPLATE VARIABLE SUBSTITUTION USED BY BOTH DESTINATION AND RENAME RENDERING
+        filename = Path(row.path).name
+        stem = Path(row.path).stem
+        extension = row.extension
+        folder = row.folder_path
+        title = row.suggested_title or stem
+        title_sanitized = re.sub(r'[<>:"/\\|?*]', "-", title).strip(" .-") or "Untitled"
+
+        result = template
+
+        # FILENAME IDENTITY VARIABLES
+        result = result.replace("{filename}", filename)
+        result = result.replace("{stem}", stem)
+        result = result.replace("{extension}", extension.lstrip("."))
+        result = result.replace("{folder}", folder)
+        result = result.replace("{root}", self.scan_root)
+
+        # TITLE VARIABLES
+        result = result.replace("{title}", title)
+        result = result.replace("{title_sanitized}", title_sanitized)
+
+        # DATE VARIABLES
+        result = result.replace("{date_year}", row.modified_at[:4] if row.modified_at and len(row.modified_at) >= 4 else "unknown")
+        result = result.replace("{date_iso}", row.date_iso if row.date_iso else "unknown")
+        result = result.replace("{date_month}", row.date_month if row.date_month else "unknown")
+        result = result.replace("{date_day}", row.date_day if row.date_day else "unknown")
+        result = result.replace("{date_full}", row.date_full if row.date_full else "unknown")
+
+        # SIZE VARIABLES
+        result = result.replace("{size_kb}", str(row.size_kb) if row.size_kb else "0")
+        result = result.replace("{size_mb}", str(row.size_mb) if row.size_mb else "0")
+
+        # NORMALIZATION VARIABLES
+        result = result.replace("{stem_lower}", stem.lower())
+        result = result.replace("{ext_lower}", extension.lstrip(".").lower())
+        result = result.replace("{filename_lower}", filename.lower())
+        result = result.replace("{filename_nospace}", filename.replace(" ", "-").replace("_", "-"))
+        result = result.replace("{stem_nospace}", stem.replace(" ", "-").replace("_", "-"))
+
+        # DOCUMENT TYPE VARIABLES
+        result = result.replace("{doc_type}", row.doc_type if row.doc_type else "Document")
+        result = result.replace("{doc_type_lower}", (row.doc_type if row.doc_type else "document").lower())
+
         return result

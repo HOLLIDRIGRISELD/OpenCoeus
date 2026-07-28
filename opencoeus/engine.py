@@ -4,12 +4,13 @@ import csv
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from .config import ScanSettings
 from .database import AuditStore
-from .documents import extract_text, suggest_title
+from .documents import extract_text, suggest_title, detect_document_type, extract_metadata
 from .folder_classifier import classify_tree
 from .folder_tree import build_folder_tree, flatten_tree
 from .hashing import sha256_file
@@ -32,6 +33,15 @@ class ManifestRow:
     extension: str = ""
     modified_at: str = ""
     folder_path: str = ""
+    # STAGE 4: COMPUTED METADATA FOR TEMPLATE VARIABLE RENDERING
+    size_kb: float = 0.0
+    size_mb: float = 0.0
+    date_iso: str = ""
+    date_month: str = ""
+    date_day: str = ""
+    date_full: str = ""
+    # STAGE 5: CONTENT-AWARE DOCUMENT TYPE
+    doc_type: str = ""
 
 
 @dataclass
@@ -48,6 +58,7 @@ class ScanResult:
 
 
 class ScanEngine:
+
     def __init__(self, settings: ScanSettings, store: AuditStore | None = None) -> None:
         self.settings, self.store = settings, store or AuditStore()
 
@@ -127,9 +138,13 @@ class ScanEngine:
                     file_status = "unreadable"
                     scan_result.errors.append(f"Cannot hash {file_record.path}: {file_error}")
             suggested_title = ""
-            if use_extraction and file_status in {"unique", "protected"} and file_record.path.suffix.lower() in {".pdf", ".docx"}:
-                suggested_title = suggest_title(extract_text(file_record.path), file_record.path.stem)
+            doc_type = ""
+            if use_extraction and file_status in {"unique", "protected"} and file_record.path.suffix.lower() in {".pdf", ".docx", ".txt", ".md"}:
+                extracted_text = extract_text(file_record.path)
+                suggested_title = suggest_title(extracted_text, file_record.path.stem)
                 suggested_title = self.store.reserve_title(suggested_title, str(file_record.path))
+                metadata = extract_metadata(file_record.path) if file_record.path.suffix.lower() in {".pdf", ".docx"} else {}
+                doc_type = detect_document_type(extracted_text, metadata, suggested_title)
             batch_records.append((
                 str(file_record.path), file_record.size, file_hash or None, file_status,
                 file_record.relative_path, file_record.extension,
@@ -142,10 +157,17 @@ class ScanEngine:
                 status=file_status,
                 duplicate_of=original_file_path,
                 suggested_title=suggested_title,
+                doc_type=doc_type,
                 relative_path=file_record.relative_path,
                 extension=file_record.extension,
                 modified_at=file_record.modified_at.isoformat() if file_record.modified_at else "",
                 folder_path=file_record.folder_path,
+                size_kb=round(file_record.size / 1024, 1) if file_record.size > 0 else 0.0,
+                size_mb=round(file_record.size / (1024 * 1024), 2) if file_record.size > 0 else 0.0,
+                date_iso=file_record.modified_at.strftime("%Y-%m-%d") if file_record.modified_at else "",
+                date_month=file_record.modified_at.strftime("%m") if file_record.modified_at else "",
+                date_day=file_record.modified_at.strftime("%d") if file_record.modified_at else "",
+                date_full=file_record.modified_at.strftime("%Y-%m-%d %H:%M") if file_record.modified_at else "",
             ))
         self.store.record_files_batch(batch_records)
 
@@ -153,7 +175,7 @@ class ScanEngine:
         # CHECKS WHETHER A FILE FOLDER PATH MATCHES ANY EXCLUDED FOLDER
         normalized = file_record.folder_path.replace("\\", "/")
         for excluded_folder in excluded_folders:
-            excluded_normalized = excluded_folder.replace("\\", "/").rstrip("/") 
+            excluded_normalized = excluded_folder.replace("\\", "/").rstrip("/")
             if normalized == excluded_normalized or normalized.startswith(excluded_normalized + "/"):
                 return True
         return False
@@ -162,7 +184,7 @@ class ScanEngine:
         # CHECKS WHETHER A FILE FOLDER PATH MATCHES ANY INCLUDED FOLDER
         normalized = file_record.folder_path.replace("\\", "/")
         for included_folder in included_folders:
-            included_normalized = included_folder.replace("\\", "/").rstrip("/") 
+            included_normalized = included_folder.replace("\\", "/").rstrip("/")
             if normalized == included_normalized or normalized.startswith(included_normalized + "/"):
                 return True
         return False
@@ -174,6 +196,8 @@ def write_manifest(scan_result: ScanResult, destination_path: Path) -> None:
         csv_writer = csv.DictWriter(csv_output_file, fieldnames=[
             "path", "size", "sha256", "status", "duplicate_of", "suggested_title",
             "relative_path", "extension", "modified_at", "folder_path",
+            "size_kb", "size_mb", "date_iso", "date_month", "date_day", "date_full",
+            "doc_type",
         ])
         csv_writer.writeheader()
         csv_writer.writerows(manifest_row.__dict__ for manifest_row in scan_result.rows)

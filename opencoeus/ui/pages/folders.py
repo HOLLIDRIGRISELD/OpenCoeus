@@ -165,9 +165,3 @@ class FoldersPage(QWidget):
 
         # REBUILD EXCLUDED SET FROM ALL CHECKBOXES (PROPAGATION AFFECTS CHILDREN).
         self._excluded = self.card_tree.getExcludedPaths()
-
-    # PUBLIC ACCESSORS
-
-    def get_excluded_folders(self) -> set[str]:
-        """RETURN CURRENT EXCLUDED FOLDER SET."""
-        return set(self._excluded)

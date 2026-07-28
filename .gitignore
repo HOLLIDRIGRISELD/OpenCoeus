@@ -7,6 +7,8 @@ dist/
 *.spec
 .idea/
 .vscode/
+debug_output.txt
+generate_test_data_output/
 *.swp
 *.swo
 *~

@@ -37,7 +37,7 @@ def section_sub(text: str) -> QLabel:
 
 
 def status_badge(text: str, color: str, bg_color: str) -> QLabel:
-    """CREATE A SMALL COLORED STATUS BADGE LABEL."""
+    """Create a small colored status badge label."""
     label = QLabel(text)
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     label.setWordWrap(False)
@@ -75,7 +75,7 @@ def fmt_size(size: int) -> str:
 # CARD TABLE
 
 class CardRow(QFrame):
-    """A SINGLE ROW IN THE CARD TABLE, STYLED AS A CARD."""
+    """A single row in the card table, styled as a card."""
     clicked = pyqtSignal(int)
 
     def __init__(self, row_index: int, parent=None):
@@ -123,10 +123,8 @@ class CardRow(QFrame):
 
 
 class CardTable(QWidget):
-    """
-    A MODERN CARD-BASED TABLE REPLACING QTABLEWIDGET.
-    EACH ROW IS A STYLED CARD WITH PROPER LAYOUT AND SELECTION.
-    """
+    """A modern card-based table replacing qtablewidget.
+    Each row is a styled card with proper layout and selection."""
     row_clicked = pyqtSignal(int)
     row_double_clicked = pyqtSignal(int)
 
@@ -139,8 +137,6 @@ class CardTable(QWidget):
         self._column_widths = column_widths or []
         self._rows: list[CardRow] = []
         self._selected_index: int = -1
-        self._sorting_column: int = -1
-        self._sorting_ascending: bool = True
 
         self._build_ui()
 
@@ -223,7 +219,7 @@ class CardTable(QWidget):
         root.addWidget(self._scroll)
 
     def setRowCount(self, count: int):
-        """REMOVE ALL EXISTING ROWS."""
+        """Remove all existing rows."""
         for row in self._rows:
             row.setParent(None)
             row.deleteLater()
@@ -232,7 +228,7 @@ class CardTable(QWidget):
 
     def addRow(self, widgets: list[tuple[str, QWidget | None]], tooltips: list[str] | None = None):
         """
-        ADD A ROW. widgets is a list of (text, optional_widget) tuples.
+        Add a row. widgets is a list of (text, optional_widget) tuples.
         If widget is provided, it's used instead of a text label (for badges etc).
         """
         row_index = len(self._rows)
@@ -274,7 +270,7 @@ class CardTable(QWidget):
         self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
 
     def clear(self):
-        """REMOVE ALL ROWS."""
+        """Remove all rows."""
         self.setRowCount(0)
 
     def _on_row_clicked(self, index: int):
@@ -287,12 +283,8 @@ class CardTable(QWidget):
             self._rows[index].set_selected(True)
         self.row_clicked.emit(index)
 
-    def selectedRow(self) -> int:
-        """RETURN THE SELECTED ROW INDEX, OR -1."""
-        return self._selected_index
-
     def selectedRows(self) -> list[int]:
-        """RETURN LIST OF SELECTED ROW INDICES (SINGLE SELECT FOR NOW)."""
+        """Return list of selected row indices (single select for now)."""
         if self._selected_index >= 0:
             return [self._selected_index]
         return []
@@ -300,8 +292,13 @@ class CardTable(QWidget):
     def rowCount(self) -> int:
         return len(self._rows)
 
+    def setRowHidden(self, row: int, hidden: bool):
+        """Show or hide a row by index."""
+        if 0 <= row < len(self._rows):
+            self._rows[row].setVisible(not hidden)
+
     def cellWidget(self, row: int, col: int) -> QWidget | None:
-        """GET THE WIDGET AT A SPECIFIC CELL (FOR BADGE ACCESS)."""
+        """Get the widget at a specific cell (for badge access)."""
         if row < 0 or row >= len(self._rows):
             return None
         row_widget = self._rows[row]
@@ -313,11 +310,11 @@ class CardTable(QWidget):
         return None
 
     def item(self, row: int, col: int) -> QLabel | None:
-        """GET THE LABEL AT A SPECIFIC CELL."""
+        """Get the label at a specific cell."""
         return self.cellWidget(row, col)
 
     def setCellWidget(self, row: int, col: int, widget: QWidget):
-        """REPLACE THE WIDGET AT A SPECIFIC CELL."""
+        """Replace the widget at a specific cell."""
         if row < 0 or row >= len(self._rows):
             return
         row_widget = self._rows[row]
@@ -336,7 +333,7 @@ class CardTable(QWidget):
             layout.insertWidget(col, widget)
 
     def removeRow(self, row: int):
-        """REMOVE A SINGLE ROW BY INDEX."""
+        """Remove a single row by index."""
         if row < 0 or row >= len(self._rows):
             return
         rw = self._rows.pop(row)
@@ -350,7 +347,7 @@ class CardTable(QWidget):
 # CARD TREE
 
 class _CardTreeRow(QFrame):
-    """A SINGLE ROW IN THE CARD TREE, STYLED AS A CARD."""
+    """A single row in the card tree, styled as a card."""
     clicked = pyqtSignal(int)
 
     def __init__(self, row_index: int, parent=None):
@@ -399,9 +396,9 @@ class _CardTreeRow(QFrame):
 
 class CardTree(QWidget):
     """
-    A MODERN CARD-BASED TREE WIDGET.
-    EACH ROW IS A STYLED CARD WITH HIERARCHY (INDENTATION, EXPAND/COLLAPSE)
-    AND TRI-STATE CHECKBOXES FOR EXCLUSION.
+    A modern card-based tree widget.
+    Each row is a styled card with hierarchy (indentation, expand/collapse)
+    and tri-state checkboxes for exclusion.
     """
 
     row_clicked = pyqtSignal(int)
@@ -515,15 +512,13 @@ class CardTree(QWidget):
     # STYLING HELPERS
 
     def _checkbox_qss(self, checked: bool) -> str:
-        """RETURN QSS FOR A CUSTOM CHECKBOX BUTTON."""
+        """Return qss for a custom checkbox button."""
         if checked:
             bg = self._COLORS['accent']
             border = self._COLORS['accent']
-            mark = "✓"
         else:
             bg = self._COLORS['surface']
             border = self._COLORS['border_light']
-            mark = ""
         return f"""
             QPushButton {{
                 background-color: {bg};
@@ -540,7 +535,7 @@ class CardTree(QWidget):
         """
 
     def _arrow_qss(self) -> str:
-        """RETURN QSS FOR EXPAND/COLLAPSE ARROW."""
+        """Return qss for expand/collapse arrow."""
         return f"""
             QPushButton {{
                 background: transparent;
@@ -557,7 +552,7 @@ class CardTree(QWidget):
     # PUBLIC API
 
     def clear(self):
-        """REMOVE ALL ROWS AND RESET STATE."""
+        """Remove all rows and reset state."""
         for row in self._rows:
             row.setParent(None)
             row.deleteLater()
@@ -568,7 +563,7 @@ class CardTree(QWidget):
     def addNode(self, name: str, path: str, depth: int, file_count: int,
                 total_size: int, classification: str | None, excluded: bool,
                 has_children: bool) -> int:
-        """ADD A FOLDER NODE AS A ROW. RETURNS THE ROW INDEX."""
+        """Add a folder node as a row. returns the row index."""
         row_index = len(self._rows)
         row = _CardTreeRow(row_index)
         row.clicked.connect(self._on_row_clicked)
@@ -699,8 +694,8 @@ class CardTree(QWidget):
 
     def finalizeHierarchy(self):
         """
-        CALL AFTER ALL addNode() TO COMPUTE PARENT/CHILD RELATIONSHIPS.
-        NODES MUST BE ADDED IN TREE PREORDER (DEPTH-FIRST).
+        Call after all addnode() to compute parent/child relationships.
+        Nodes must be added in tree preorder (depth-first).
         """
         depth_stack: list[int] = []
         for i, nd in enumerate(self._node_data):
@@ -718,7 +713,7 @@ class CardTree(QWidget):
             depth_stack.append(i)
 
     def expandAll(self):
-        """EXPAND ALL NODES."""
+        """Expand all nodes."""
         for i, nd in enumerate(self._node_data):
             nd["expanded"] = True
             self._rows[i].setVisible(True)
@@ -726,7 +721,7 @@ class CardTree(QWidget):
                 nd["arrow_ref"].setText("▼")
 
     def collapseAll(self):
-        """COLLAPSE ALL NODES (HIDE ALL NON-ROOT ROWS)."""
+        """Collapse all nodes (hide all non-root rows)."""
         for i, nd in enumerate(self._node_data):
             if nd["depth"] == 0:
                 nd["expanded"] = True
@@ -740,7 +735,7 @@ class CardTree(QWidget):
     # EXPAND / COLLAPSE
 
     def _toggle_expand(self, row_index: int):
-        """TOGGLE EXPAND/COLLAPSE FOR A NODE."""
+        """Toggle expand/collapse for a node."""
         nd = self._node_data[row_index]
         if not nd["has_children"]:
             return
@@ -752,7 +747,7 @@ class CardTree(QWidget):
         self._set_descendants_visible(row_index, nd["expanded"])
 
     def _set_descendants_visible(self, row_index: int, visible: bool):
-        """RECURSIVELY SHOW/HIDE ALL DESCENDANTS."""
+        """Recursively show/hide all descendants."""
         for child_idx in self._node_data[row_index]["child_indices"]:
             self._rows[child_idx].setVisible(visible)
             child_nd = self._node_data[child_idx]
@@ -767,7 +762,7 @@ class CardTree(QWidget):
     # CHECKBOX HANDLING
 
     def _on_checkbox_clicked(self, row_index: int, checked: bool):
-        """HANDLE CHECKBOX TOGGLE WITH CHILD/PARENT PROPAGATION."""
+        """Handle checkbox toggle with child/parent propagation."""
         nd = self._node_data[row_index]
         cb = nd["cb_ref"]
 
@@ -784,7 +779,7 @@ class CardTree(QWidget):
         self.check_changed.emit(row_index, checked)
 
     def _set_children_checked(self, row_index: int, checked: bool):
-        """RECURSIVELY SET ALL CHILDREN CHECKBOXES."""
+        """Recursively set all children checkboxes."""
         for child_idx in self._node_data[row_index]["child_indices"]:
             child_nd = self._node_data[child_idx]
             child_cb = child_nd["cb_ref"]
@@ -793,7 +788,7 @@ class CardTree(QWidget):
             self._set_children_checked(child_idx, checked)
 
     def _update_parent_state(self, row_index: int):
-        """RECURSIVELY UPDATE PARENT TRI-STATE BASED ON CHILDREN."""
+        """Recursively update parent tri-state based on children."""
         parent_idx = self._node_data[row_index]["parent_index"]
         if parent_idx < 0:
             return
@@ -838,7 +833,7 @@ class CardTree(QWidget):
     # ROW SELECTION
 
     def _on_row_clicked(self, index: int):
-        """HANDLE ROW CLICK FOR SELECTION."""
+        """Handle row click for selection."""
         # ONLY VISIBLE ROWS CAN BE SELECTED.
         if not self._rows[index].isVisible():
             return
@@ -852,7 +847,7 @@ class CardTree(QWidget):
     # PUBLIC ACCESSORS
 
     def getExcludedPaths(self) -> set[str]:
-        """RETURN SET OF ALL EXCLUDED FOLDER PATHS."""
+        """Return set of all excluded folder paths."""
         excluded = set()
         for nd in self._node_data:
             if not nd["cb_ref"].isChecked():
@@ -860,51 +855,14 @@ class CardTree(QWidget):
         return excluded
 
     def getNodePath(self, row: int) -> str:
-        """RETURN THE PATH FOR A GIVEN ROW."""
+        """Return the path for a given row."""
         if 0 <= row < len(self._node_data):
             return self._node_data[row]["path"]
         return ""
 
     def rowCount(self) -> int:
-        """RETURN TOTAL NUMBER OF NODES."""
+        """Return total number of nodes."""
         return len(self._rows)
-
-    def isExpanded(self, row: int) -> bool:
-        """RETURN WHETHER A NODE IS EXPANDED."""
-        if 0 <= row < len(self._node_data):
-            return self._node_data[row]["expanded"]
-        return False
-
-
-# LEGACY HELPERS (KEPT FOR COMPATIBILITY)
-
-def make_table(headers, stretch_column=0, select_mode=None):
-    from PyQt6.QtWidgets import QTableWidget, QHeaderView
-    from PyQt6.QtCore import Qt
-    if select_mode is None:
-        select_mode = QTableWidget.SelectionMode.SingleSelection
-    table = QTableWidget()
-    table.setColumnCount(len(headers))
-    table.setHorizontalHeaderLabels(headers)
-    for col in range(len(headers)):
-        if col == stretch_column:
-            table.horizontalHeader().setSectionResizeMode(
-                col, QHeaderView.ResizeMode.Stretch
-            )
-        else:
-            table.horizontalHeader().setSectionResizeMode(
-                col, QHeaderView.ResizeMode.ResizeToContents
-            )
-    table.horizontalHeader().setMinimumSectionSize(60)
-    table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-    table.setSelectionMode(select_mode)
-    table.setAlternatingRowColors(True)
-    table.verticalHeader().setVisible(False)
-    table.verticalHeader().setDefaultSectionSize(42)
-    table.setShowGrid(False)
-    table.setSortingEnabled(True)
-    table.viewport().setAutoFillBackground(False)
-    return table
 
 
 def make_container(widget) -> QFrame:

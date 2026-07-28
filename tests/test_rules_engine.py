@@ -7,18 +7,26 @@ from opencoeus.rules_engine import RulesEngine, RuleMatch
 
 def _make_row(path: str, size: int = 100, extension: str = ".txt",
               modified_at: str = "2024-06-15T10:30:00", folder_path: str = "/docs",
-              status: str = "unique") -> ManifestRow:
+              status: str = "unique", suggested_title: str = "",
+              size_kb: float = 0.0, size_mb: float = 0.0,
+              date_iso: str = "", date_month: str = "", date_day: str = "",
+              date_full: str = "") -> ManifestRow:
     # HELPER TO CREATE A MANIFEST ROW WITH SENSIBLE DEFAULTS FOR RULE TESTING.
     return ManifestRow(
         path=path, size=size, sha256="", status=status,
         relative_path=path.lstrip("/"), extension=extension,
         modified_at=modified_at, folder_path=folder_path,
+        suggested_title=suggested_title,
+        size_kb=size_kb, size_mb=size_mb,
+        date_iso=date_iso, date_month=date_month,
+        date_day=date_day, date_full=date_full,
     )
 
 
 def _make_rule(rule_id: int = 1, name: str = "Test Rule", rule_type: str = "extension",
                rule_config: dict | None = None, destination_template: str = "/dest/{filename}",
-               priority: int = 0, enabled: bool = True, action_type: str = "move") -> dict:
+               priority: int = 0, enabled: bool = True, action_type: str = "move",
+               rename_template: str = "") -> dict:
     # HELPER TO CREATE A RULE DICTIONARY FOR TESTING THE RULES ENGINE.
     import json
     return {
@@ -30,6 +38,7 @@ def _make_rule(rule_id: int = 1, name: str = "Test Rule", rule_type: str = "exte
         "priority": priority,
         "enabled": enabled,
         "action_type": action_type,
+        "rename_template": rename_template,
     }
 
 
@@ -392,13 +401,6 @@ class DefaultRulesSingleSourceTests(unittest.TestCase):
         self.assertTrue(hasattr(rules_engine, "DEFAULT_RULES"))
         self.assertGreater(len(rules_engine.DEFAULT_RULES), 0)
 
-    def test_cli_imports_same_rules(self):
-        # VERIFIES THAT CLI MODULE IMPORTS DEFAULT_RULES FROM RULES_ENGINE.
-        from opencoeus import cli
-        # CLI MODULE SHOULD HAVE DEFAULT_RULES IN ITS NAMESPACE AFTER IMPORT.
-        from opencoeus.rules_engine import DEFAULT_RULES as engine_rules
-        self.assertGreater(len(engine_rules), 0)
-
 
 class TimezoneAwareDateTests(unittest.TestCase):
     def _make_engine(self):
@@ -515,6 +517,190 @@ class MalformedProfileJsonTests(unittest.TestCase):
         self.assertEqual(config.excluded_folders, ["node_modules"])
         self.assertEqual(config.custom_protected_patterns, ["^\\.git$"])
         self.assertFalse(config.document_extraction)
+
+
+# ============================================================
+# STAGE 4: RENAME ACTION TESTS
+# ============================================================
+
+
+class RenameRuleTests(unittest.TestCase):
+    def test_rename_action_renames_in_same_directory(self):
+        # VERIFIES THAT A RENAME ACTION PRODUCES A NEW FILENAME IN THE SAME DIRECTORY.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(
+            rule_type="extension", action_type="rename",
+            rule_config={"extensions": [".pdf"]},
+            destination_template="",
+            rename_template="{stem}_renamed.{extension}",
+        )
+        row = _make_row("/docs/report.pdf", extension=".pdf")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].action_type, "rename")
+        self.assertEqual(matches[0].new_filename, "report_renamed.pdf")
+        self.assertEqual(matches[0].proposed_path, "/docs/report_renamed.pdf")
+        self.assertEqual(matches[0].original_filename, "report.pdf")
+
+    def test_rename_action_with_title_variable(self):
+        # VERIFIES THAT THE TITLE TEMPLATE VARIABLE IS SUBSTITUTED IN RENAME.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(
+            rule_type="extension", action_type="rename",
+            rule_config={"extensions": [".pdf"]},
+            destination_template="",
+            rename_template="{title}.{extension}",
+        )
+        row = _make_row("/docs/report.pdf", extension=".pdf", suggested_title="Financial Report Q4")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].new_filename, "Financial Report Q4.pdf")
+        self.assertEqual(matches[0].proposed_path, "/docs/Financial Report Q4.pdf")
+
+    def test_rename_action_with_date_variables(self):
+        # VERIFIES THAT DATE TEMPLATE VARIABLES ARE SUBSTITUTED IN RENAME.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(
+            rule_type="extension", action_type="rename",
+            rule_config={"extensions": [".jpg"]},
+            destination_template="",
+            rename_template="{date_iso}_{filename}",
+        )
+        row = _make_row(
+            "/photos/sunset.jpg", extension=".jpg",
+            date_iso="2024-06-15", date_month="06", date_day="15",
+        )
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].new_filename, "2024-06-15_sunset.jpg")
+
+    def test_rename_no_change_is_skipped(self):
+        # VERIFIES THAT A RENAME THAT DOES NOT CHANGE THE FILENAME IS SKIPPED.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(
+            rule_type="extension", action_type="rename",
+            rule_config={"extensions": [".pdf"]},
+            destination_template="",
+            rename_template="{filename}",
+        )
+        row = _make_row("/docs/report.pdf", extension=".pdf")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 0)
+
+    def test_rename_empty_template_is_skipped(self):
+        # VERIFIES THAT A RENAME WITH AN EMPTY TEMPLATE IS SKIPPED.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(
+            rule_type="extension", action_type="rename",
+            rule_config={"extensions": [".pdf"]},
+            destination_template="",
+            rename_template="",
+        )
+        row = _make_row("/docs/report.pdf", extension=".pdf")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 0)
+
+
+class MoveRenameRuleTests(unittest.TestCase):
+    def test_move_rename_action_moves_and_renames(self):
+        # VERIFIES THAT A MOVE AND RENAME ACTION MOVES TO DESTINATION AND RENAMES.
+        engine = RulesEngine(ProfileConfig(), scan_root="/data")
+        rule = _make_rule(
+            rule_type="extension", action_type="move+rename",
+            rule_config={"extensions": [".pdf"]},
+            destination_template="/data/Documents/{title}.{extension}",
+            rename_template="{title}.{extension}",
+        )
+        row = _make_row(
+            "/data/inbox/report.pdf", extension=".pdf",
+            suggested_title="Quarterly Report",
+        )
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].action_type, "move+rename")
+        self.assertEqual(matches[0].proposed_path, "/data/Documents/Quarterly Report.pdf")
+        self.assertEqual(matches[0].new_filename, "Quarterly Report.pdf")
+        self.assertEqual(matches[0].original_filename, "report.pdf")
+
+
+class TemplateVariableTests(unittest.TestCase):
+    def test_all_template_variables_rendered(self):
+        # VERIFIES THAT ALL TEMPLATE VARIABLES ARE CORRECTLY SUBSTITUTED.
+        engine = RulesEngine(ProfileConfig(), scan_root="/root")
+        rule = _make_rule(
+            rule_type="always",
+            destination_template="/root/{stem}_{date_iso}_{size_kb}kb_{extension}",
+        )
+        row = _make_row(
+            "/root/data.csv", extension=".csv",
+            size=2048, size_kb=2.0, size_mb=0.0,
+            date_iso="2024-06-15", date_month="06", date_day="15",
+        )
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertIn("data", matches[0].proposed_path)
+        self.assertIn("2024-06-15", matches[0].proposed_path)
+        self.assertIn("2.0kb", matches[0].proposed_path)
+
+    def test_title_sanitized_variable(self):
+        # VERIFIES THAT TITLE SANITIZED REMOVES UNSAFE FILENAME CHARACTERS.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(
+            rule_type="extension", action_type="rename",
+            rule_config={"extensions": [".pdf"]},
+            destination_template="",
+            rename_template="{title_sanitized}.{extension}",
+        )
+        row = _make_row(
+            "/docs/report.pdf", extension=".pdf",
+            suggested_title='Report: "Final" <v2>',
+        )
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertNotIn(":", matches[0].new_filename)
+        self.assertNotIn('"', matches[0].new_filename)
+        self.assertNotIn("<", matches[0].new_filename)
+
+
+class GlobPatternTests(unittest.TestCase):
+    def test_glob_pattern_matches_filename(self):
+        # VERIFIES THAT GLOB PATTERNS ARE MATCHED USING FNMATCH.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(rule_type="pattern", rule_config={"patterns": ["report_*.csv"]})
+        row = _make_row("/reports/report_2024.csv", extension=".csv")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+
+    def test_glob_pattern_ignores_non_matching(self):
+        # VERIFIES THAT GLOB PATTERNS DO NOT MATCH NON-MATCHING FILENAMES.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(rule_type="pattern", rule_config={"patterns": ["report_*.csv"]})
+        row = _make_row("/data/summary.csv", extension=".csv")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 0)
+
+    def test_regex_pattern_still_works(self):
+        # VERIFIES THAT LEGACY REGEX PATTERNS STILL WORK VIA REGEX FALLBACK.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(rule_type="pattern", rule_config={"patterns": [r"^report_.*\.csv$"]})
+        row = _make_row("/reports/report_2024.csv", extension=".csv")
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+
+
+class DefaultRenameRulesTests(unittest.TestCase):
+    def test_default_rules_include_rename_actions(self):
+        # VERIFIES THAT DEFAULT RULES INCLUDE RENAME AND MOVE AND RENAME ACTIONS.
+        from opencoeus.rules_engine import DEFAULT_RULES
+        rename_rules = [r for r in DEFAULT_RULES if r.get("action_type") in {"rename", "move+rename"}]
+        self.assertGreaterEqual(len(rename_rules), 3)
+
+    def test_rename_rules_have_rename_template(self):
+        # VERIFIES THAT ALL RENAME RULES HAVE A NON EMPTY RENAME TEMPLATE.
+        from opencoeus.rules_engine import DEFAULT_RULES
+        for rule in DEFAULT_RULES:
+            if rule.get("action_type") in {"rename", "move+rename"}:
+                self.assertTrue(rule.get("rename_template"), f"Rule '{rule['name']}' missing rename_template")
 
 
 if __name__ == "__main__":

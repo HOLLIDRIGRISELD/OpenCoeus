@@ -11,17 +11,19 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QTextEdit,
     QWidget,
 )
 
-from ..theme import COLORS, accent_button_qss, dialog_stylesheet
+from ..theme import COLORS, accent_button_qss, dialog_stylesheet, text_button_qss
 
 
 class RuleEditDialog(QDialog):
+
     def __init__(self, parent: QWidget | None = None, rule: dict | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit Rule" if rule else "Add Rule")
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(500)
         self.rule = rule or {}
 
         layout = QFormLayout(self)
@@ -42,9 +44,24 @@ class RuleEditDialog(QDialog):
         self.priority_input.setPlaceholderText("10")
         layout.addRow("Priority:", self.priority_input)
 
+        # STAGE 4: ACTION TYPE SELECTOR
+        self.action_combo = QComboBox()
+        self.action_combo.addItems(["move", "rename", "move+rename"])
+        self.action_combo.setToolTip("Move: relocate file to new folder\nRename: change filename in same folder\nMove+Rename: do both")
+        idx = self.action_combo.findText(self.rule.get("action_type", "move"))
+        if idx >= 0:
+            self.action_combo.setCurrentIndex(idx)
+        layout.addRow("Action:", self.action_combo)
+
         self.template_input = QLineEdit(self.rule.get("destination_template", ""))
         self.template_input.setPlaceholderText("{folder}/Documents/{filename}")
         layout.addRow("Destination:", self.template_input)
+
+        # STAGE 4: RENAME TEMPLATE INPUT
+        self.rename_input = QLineEdit(self.rule.get("rename_template", ""))
+        self.rename_input.setPlaceholderText("{title}{extension}")
+        self.rename_input.setToolTip("Template for the new filename.\nAvailable variables: {filename}, {stem}, {extension}, {title}, {title_sanitized}, {date_iso}, {date_year}, {date_month}, {date_day}, {date_full}, {size_kb}, {size_mb}")
+        layout.addRow("Rename To:", self.rename_input)
 
         self.config_input = QLineEdit(self.rule.get("rule_config", "{}"))
         self.config_input.setPlaceholderText('{"extensions": [".pdf", ".docx"]}')
@@ -58,6 +75,15 @@ class RuleEditDialog(QDialog):
         self.enabled_check = QCheckBox("Enabled")
         self.enabled_check.setChecked(self.rule.get("enabled", True))
         layout.addRow("", self.enabled_check)
+
+        # STAGE 4: TEMPLATE VARIABLES HELP
+        variables_help = QLabel(
+            "Template variables: {filename}, {stem}, {extension}, {title}, {title_sanitized}, "
+            "{date_iso}, {date_year}, {date_month}, {date_day}, {date_full}, {size_kb}, {size_mb}, {folder}, {root}"
+        )
+        variables_help.setStyleSheet(f"color: {COLORS.get('text3', '#64748b')}; font-size: 10px;")
+        variables_help.setWordWrap(True)
+        layout.addRow("Variables:", variables_help)
 
         buttons = QHBoxLayout()
         cancel_btn = QPushButton("Cancel")
@@ -92,4 +118,6 @@ class RuleEditDialog(QDialog):
             "destination_template": self.template_input.text(),
             "rule_config": self.config_input.text(),
             "enabled": self.enabled_check.isChecked(),
+            "action_type": self.action_combo.currentText(),
+            "rename_template": self.rename_input.text(),
         }

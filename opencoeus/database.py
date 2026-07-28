@@ -41,13 +41,23 @@ _EXPECTED_COLUMNS = {
     "proposed_actions": [
         ("reason", "TEXT DEFAULT ''"),
         ("batch_id", "INTEGER REFERENCES transaction_batches(id)"),
+        ("original_filename", "TEXT DEFAULT ''"),
+        ("new_filename", "TEXT DEFAULT ''"),
+    ],
+    "organization_rules": [
+        ("action_type", "VARCHAR(32) DEFAULT 'move'"),
+        ("rename_template", "TEXT DEFAULT ''"),
+    ],
+    "transaction_entries": [
+        ("original_filename", "TEXT DEFAULT ''"),
+        ("new_filename", "TEXT DEFAULT ''"),
     ],
 }
 
 
 def _ensure_columns(engine) -> None:
-    # INSPECTS EXISTING TABLES AND ADDS ANY COLUMNS DEFINED IN THE MODEL BUT MISSING FROM THE DB
-    # THIS HANDLES SCHEMA DRIFT FOR OLDER DATABASES WITHOUT A FULL MIGRATION FRAMEWORK
+    """Inspect existing tables and add any columns defined in the model but missing from the DB.
+    Handles schema drift for older databases without a full migration framework."""
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     tables_to_check = [t for t in _EXPECTED_COLUMNS if t in existing_tables]
@@ -64,6 +74,7 @@ def _ensure_columns(engine) -> None:
 
 
 class AuditStore:
+
     def __init__(self, database_connection_url: str | None = None) -> None:
         self.engine = create_engine(
             database_connection_url or database_url(),
@@ -102,7 +113,7 @@ class AuditStore:
             session.commit()
 
     def record_files_batch(self, records: list[tuple]) -> None:
-        # BULK INSERTS OR UPDATES MULTIPLE FILE RECORDS IN A SINGLE SESSION FOR PERFORMANCE
+        """Bulk insert or update multiple file records in a single session for performance."""
         logger.debug("Recording %d files to database", len(records))
         if not records:
             return
@@ -156,7 +167,7 @@ class AuditStore:
     def create_profile(self, name: str, root_path: str = "", included_folders: list[str] | None = None,
                        excluded_folders: list[str] | None = None, custom_protected_patterns: list[str] | None = None,
                        document_extraction: bool = True) -> ScanProfile:
-        # CREATES AND PERSISTS A NEW SCAN PROFILE WITH DEFAULT EMPTY FOLDER LISTS
+        """Create and persist a new scan profile with default empty folder lists."""
         with self.session_factory() as session:
             profile = ScanProfile(
                 name=name,
@@ -172,22 +183,22 @@ class AuditStore:
             return profile
 
     def list_profiles(self) -> list[ScanProfile]:
-        # RETURNS ALL SAVED SCAN PROFILES ORDERED BY NAME
+        """Return all saved scan profiles ordered by name."""
         with self.session_factory() as session:
             return list(session.scalars(select(ScanProfile).order_by(ScanProfile.name)).all())
 
     def get_profile(self, profile_id: int) -> ScanProfile | None:
-        # RETRIEVES A SINGLE SCAN PROFILE BY ITS ID
+        """Retrieve a single scan profile by its ID."""
         with self.session_factory() as session:
             return session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
 
     def get_profile_by_name(self, profile_name: str) -> ScanProfile | None:
-        # RETRIEVES A SINGLE SCAN PROFILE BY ITS UNIQUE NAME
+        """Retrieve a single scan profile by its unique name."""
         with self.session_factory() as session:
             return session.scalar(select(ScanProfile).where(ScanProfile.name == profile_name))
 
     def update_profile(self, profile_id: int, **kwargs) -> ScanProfile | None:
-        # UPDATES SPECIFIED FIELDS ON A SCAN PROFILE AND RECORDS THE UPDATE TIME
+        """Update specified fields on a scan profile and record the update time."""
         serializable_fields = {"included_folders", "excluded_folders", "custom_protected_patterns"}
         with self.session_factory() as session:
             profile = session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
@@ -203,7 +214,7 @@ class AuditStore:
             return profile
 
     def delete_profile(self, profile_id: int) -> bool:
-        # REMOVES A SCAN PROFILE AND ALL ITS ASSOCIATED CLASSIFICATIONS AND RULES
+        """Remove a scan profile and all its associated classifications and rules."""
         with self.session_factory() as session:
             profile = session.scalar(select(ScanProfile).where(ScanProfile.id == profile_id))
             if profile is None:
@@ -261,8 +272,8 @@ class AuditStore:
     # STAGE 2: FOLDER CLASSIFICATION METHODS
 
     def save_classifications(self, profile_id: int, classifications: list[dict]) -> None:
-        # SAVES A LIST OF FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE
-        # SKIPS IF PROFILE DOES NOT EXIST (PREVENTS FK VIOLATIONS FROM ORPHANED DATA)
+        """Save a list of folder classifications for a given profile.
+        Skips if profile does not exist (prevents FK violations from orphaned data)."""
         with self.session_factory() as session:
             if not session.get(ScanProfile, profile_id):
                 return
@@ -286,14 +297,14 @@ class AuditStore:
             session.commit()
 
     def get_classifications(self, profile_id: int) -> list[FolderClassification]:
-        # RETURNS ALL FOLDER CLASSIFICATIONS FOR A GIVEN PROFILE
+        """Return all folder classifications for a given profile."""
         with self.session_factory() as session:
             return list(session.scalars(
                 select(FolderClassification).where(FolderClassification.scan_profile_id == profile_id)
             ).all())
 
     def update_classification_override(self, classification_id: int, user_override: str | None) -> bool:
-        # UPDATES THE USER OVERRIDE FOR A SPECIFIC FOLDER CLASSIFICATION
+        """Update the user override for a specific folder classification."""
         with self.session_factory() as session:
             classification = session.scalar(
                 select(FolderClassification).where(FolderClassification.id == classification_id)
@@ -307,8 +318,9 @@ class AuditStore:
     # STAGE 2: ORGANIZATION RULE METHODS
 
     def create_rule(self, profile_id: int, name: str, rule_type: str, rule_config: dict,
-                    destination_template: str, priority: int = 0, enabled: bool = True) -> OrganizationRule:
-        # CREATES AND PERSISTS A NEW ORGANIZATION RULE FOR A PROFILE
+                    destination_template: str, priority: int = 0, enabled: bool = True,
+                    action_type: str = "move", rename_template: str = "") -> OrganizationRule:
+        """Create and persist a new organization rule for a profile."""
         with self.session_factory() as session:
             rule = OrganizationRule(
                 scan_profile_id=profile_id,
@@ -318,6 +330,8 @@ class AuditStore:
                 destination_template=destination_template,
                 priority=priority,
                 enabled=enabled,
+                action_type=action_type,
+                rename_template=rename_template,
             )
             session.add(rule)
             session.commit()
@@ -325,7 +339,7 @@ class AuditStore:
             return rule
 
     def get_rules(self, profile_id: int) -> list[OrganizationRule]:
-        # RETURNS ALL ORGANIZATION RULES FOR A PROFILE ORDERED BY PRIORITY
+        """Return all organization rules for a profile ordered by priority."""
         with self.session_factory() as session:
             return list(session.scalars(
                 select(OrganizationRule)
@@ -334,7 +348,7 @@ class AuditStore:
             ).all())
 
     def get_enabled_rules(self, profile_id: int) -> list[OrganizationRule]:
-        # RETURNS ONLY ENABLED ORGANIZATION RULES FOR A PROFILE
+        """Return only enabled organization rules for a profile."""
         with self.session_factory() as session:
             return list(session.scalars(
                 select(OrganizationRule)
@@ -343,7 +357,7 @@ class AuditStore:
             ).all())
 
     def update_rule(self, rule_id: int, **kwargs) -> OrganizationRule | None:
-        # UPDATES SPECIFIED FIELDS ON AN ORGANIZATION RULE
+        """Update specified fields on an organization rule."""
         if "rule_config" in kwargs and isinstance(kwargs["rule_config"], dict):
             kwargs["rule_config"] = json.dumps(kwargs["rule_config"])
         with self.session_factory() as session:
@@ -358,7 +372,7 @@ class AuditStore:
             return rule
 
     def delete_rule(self, rule_id: int) -> bool:
-        # REMOVES AN ORGANIZATION RULE BY ITS ID AND CLEANS UP ORPHANED PROPOSED ACTIONS
+        """Remove an organization rule by its ID and clean up orphaned proposed actions."""
         with self.session_factory() as session:
             rule = session.scalar(select(OrganizationRule).where(OrganizationRule.id == rule_id))
             if rule is None:
@@ -373,10 +387,35 @@ class AuditStore:
             session.commit()
             return True
 
+    def toggle_rule(self, rule_id: int, enabled: bool | None = None) -> bool:
+        """Toggle or set the enabled status of an organization rule."""
+        with self.session_factory() as session:
+            rule = session.scalar(select(OrganizationRule).where(OrganizationRule.id == rule_id))
+            if rule is None:
+                return False
+            rule.enabled = not rule.enabled if enabled is None else enabled
+            rule.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            session.commit()
+            return True
+
+    def add_rule(self, profile_id: int, rule: dict) -> OrganizationRule:
+        """Convenience wrapper for create_rule that accepts a dict."""
+        return self.create_rule(
+            profile_id=profile_id,
+            name=rule.get("name", "Unnamed"),
+            rule_type=rule.get("rule_type", "always"),
+            rule_config=rule.get("rule_config", {}),
+            destination_template=rule.get("destination_template", ""),
+            priority=rule.get("priority", 0),
+            enabled=rule.get("enabled", True),
+            action_type=rule.get("action_type", "move"),
+            rename_template=rule.get("rename_template", ""),
+        )
+
     # STAGE 2: PROPOSED ACTION METHODS
 
     def save_proposed_actions(self, profile_id: int, actions: list[dict]) -> None:
-        # SAVES A LIST OF PROPOSED ACTIONS, CLEARING PREVIOUS ONES FOR THE PROFILE
+        """Save a list of proposed actions, clearing previous ones for the profile."""
         with self.session_factory() as session:
             # GET EXISTING ACTION IDS FOR THIS PROFILE
             existing_ids = list(session.scalars(
@@ -408,18 +447,20 @@ class AuditStore:
                     action_type=action_data["action_type"],
                     rule_id=raw_rule_id if raw_rule_id in valid_rule_ids else None,
                     reason=action_data.get("reason", ""),
+                    original_filename=action_data.get("original_filename", ""),
+                    new_filename=action_data.get("new_filename", ""),
                 ))
             session.commit()
 
     def get_proposed_actions(self, profile_id: int) -> list[ProposedAction]:
-        # RETURNS ALL PROPOSED ACTIONS FOR A GIVEN PROFILE
+        """Return all proposed actions for a given profile."""
         with self.session_factory() as session:
             return list(session.scalars(
                 select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
             ).all())
 
     def approve_action(self, action_id: int) -> bool:
-        # MARKS A PROPOSED ACTION AS APPROVED FOR FUTURE EXECUTION
+        """Mark a proposed action as approved for future execution."""
         with self.session_factory() as session:
             action = session.scalar(select(ProposedAction).where(ProposedAction.id == action_id))
             if action is None:
@@ -429,7 +470,7 @@ class AuditStore:
             return True
 
     def reject_action(self, action_id: int) -> bool:
-        # REMOVES A PROPOSED ACTION BY ITS ID (REJECTION)
+        """Remove a proposed action by its ID (rejection)."""
         with self.session_factory() as session:
             action = session.scalar(select(ProposedAction).where(ProposedAction.id == action_id))
             if action is None:
@@ -439,7 +480,7 @@ class AuditStore:
             return True
 
     def approve_all_actions(self, profile_id: int) -> int:
-        # MARKS ALL PROPOSED ACTIONS FOR A PROFILE AS APPROVED AND RETURNS THE COUNT
+        """Mark all proposed actions for a profile as approved and return the count."""
         with self.session_factory() as session:
             actions = session.scalars(
                 select(ProposedAction).where(ProposedAction.scan_profile_id == profile_id)
@@ -454,7 +495,7 @@ class AuditStore:
     # STAGE 3: TRANSACTION BATCH AND ENTRY METHODS
 
     def create_batch(self, profile_id: int, description: str = "") -> TransactionBatch:
-        # CREATES A NEW TRANSACTION BATCH FOR TRACKING EXECUTION OF APPROVED ACTIONS
+        """Create a new transaction batch for tracking execution of approved actions."""
         with self.session_factory() as session:
             batch = TransactionBatch(
                 scan_profile_id=profile_id,
@@ -469,7 +510,7 @@ class AuditStore:
     def add_entry(self, batch_id: int, action_id: int | None, action_type: str,
                   source_path: str, destination_path: str,
                   source_hash: str = "", source_size: int = 0) -> TransactionEntry:
-        # ADDS A SINGLE TRANSACTION ENTRY TO A BATCH
+        """Add a single transaction entry to a batch."""
         with self.session_factory() as session:
             entry = TransactionEntry(
                 batch_id=batch_id,
@@ -487,7 +528,7 @@ class AuditStore:
             return entry
 
     def get_entries_by_batch(self, batch_id: int, status: str | None = None) -> list[TransactionEntry]:
-        # RETURNS ALL ENTRIES FOR A BATCH, OPTIONALLY FILTERED BY STATUS
+        """Return all entries for a batch, optionally filtered by status."""
         with self.session_factory() as session:
             stmt = select(TransactionEntry).where(TransactionEntry.batch_id == batch_id)
             if status is not None:
@@ -495,7 +536,7 @@ class AuditStore:
             return list(session.scalars(stmt).all())
 
     def update_entry(self, entry_id: int, **kwargs) -> bool:
-        # UPDATES SPECIFIED FIELDS ON A TRANSACTION ENTRY
+        """Update specified fields on a transaction entry."""
         _allowed_update = {"status", "error_message", "destination_path", "source_hash",
                            "source_size", "destination_hash", "holding_path", "executed_at"}
         with self.session_factory() as session:
@@ -513,7 +554,7 @@ class AuditStore:
             return True
 
     def mark_batch(self, batch_id: int, status: str, **kwargs) -> bool:
-        # UPDATES BATCH STATUS AND OPTIONAL FIELDS LIKE COMPLETED_AT OR UNDONE_AT
+        """Update batch status and optional fields like completed_at or undone_at."""
         _allowed_batch_fields = {"status", "updated_at", "completed_at", "undone_at"}
         with self.session_factory() as session:
             batch = session.scalar(select(TransactionBatch).where(TransactionBatch.id == batch_id))
@@ -527,7 +568,7 @@ class AuditStore:
             return True
 
     def get_undoable_batches(self, profile_id: int | None = None) -> list[TransactionBatch]:
-        # RETURNS COMPLETED BATCHES IN REVERSE ORDER (MOST RECENT FIRST) FOR UNDO
+        """Return completed batches in reverse order (most recent first) for undo."""
         with self.session_factory() as session:
             stmt = select(TransactionBatch).where(TransactionBatch.status == BatchStatus.COMPLETED)
             if profile_id is not None:
@@ -535,7 +576,7 @@ class AuditStore:
             return list(session.scalars(stmt.order_by(TransactionBatch.id.desc())).all())
 
     def get_all_batches(self, profile_id: int | None = None, limit: int = 20) -> list[TransactionBatch]:
-        # RETURNS ALL BATCHES IN REVERSE ORDER FOR THE BATCH HISTORY TABLE
+        """Return all batches in reverse order for the batch history table."""
         with self.session_factory() as session:
             stmt = select(TransactionBatch)
             if profile_id is not None:
@@ -543,7 +584,7 @@ class AuditStore:
             return list(session.scalars(stmt.order_by(TransactionBatch.id.desc()).limit(limit)).all())
 
     def get_batch_entry_counts(self, batch_ids: list[int]) -> dict[int, int]:
-        # RETURNS ENTRY COUNTS FOR MULTIPLE BATCHES IN A SINGLE QUERY (AVOIDS N+1)
+        """Return entry counts for multiple batches in a single query (avoids N+1)."""
         if not batch_ids:
             return {}
         from sqlalchemy import func
@@ -556,7 +597,7 @@ class AuditStore:
             return {batch_id: count for batch_id, count in rows}
 
     def get_latest_completed_batch(self, profile_id: int) -> TransactionBatch | None:
-        # RETURNS THE MOST RECENTLY COMPLETED BATCH FOR A PROFILE
+        """Return the most recently completed batch for a profile."""
         with self.session_factory() as session:
             return session.scalar(
                 select(TransactionBatch)
@@ -568,12 +609,12 @@ class AuditStore:
             )
 
     def get_batch(self, batch_id: int) -> TransactionBatch | None:
-        # RETURNS A SINGLE BATCH BY ID
+        """Return a single batch by ID."""
         with self.session_factory() as session:
             return session.get(TransactionBatch, batch_id)
 
     def delete_proposed_actions_by_ids(self, action_ids: list[int]) -> int:
-        # DELETES SPECIFIC PROPOSED ACTIONS BY THEIR IDS (REJECTION) AND RETURNS COUNT DELETED
+        """Delete specific proposed actions by their IDs (rejection) and return count."""
         if not action_ids:
             return 0
         with self.session_factory() as session:

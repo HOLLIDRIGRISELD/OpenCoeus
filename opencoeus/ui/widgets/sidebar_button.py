@@ -5,6 +5,7 @@ from ..theme import COLORS
 
 
 class SidebarButton(QToolButton):
+
     def __init__(self, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setCheckable(True)

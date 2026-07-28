@@ -65,7 +65,7 @@ class GetBatchSummaryTests(unittest.TestCase):
             batch = store.create_batch(profile.id)
             e1 = store.add_entry(batch.id, None, "move", "/a.txt", "/new_a.txt")
             e2 = store.add_entry(batch.id, None, "move", "/b.txt", "/new_b.txt")
-            e3 = store.add_entry(batch.id, None, "move", "/c.txt", "/new_c.txt")
+            store.add_entry(batch.id, None, "move", "/c.txt", "/new_c.txt")
             store.update_entry(e1.id, status="COMPLETED")
             store.update_entry(e2.id, status="COMPLETED")
             summary = get_batch_summary(store, batch.id)

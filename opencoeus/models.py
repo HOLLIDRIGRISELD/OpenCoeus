@@ -95,6 +95,9 @@ class OrganizationRule(Base):
     destination_template: Mapped[str] = mapped_column(Text, default="")
     priority: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # STAGE 4: ACTION TYPE (MOVE, RENAME, MOVE AND RENAME) AND RENAME TEMPLATE
+    action_type: Mapped[str] = mapped_column(String(32), default="move")
+    rename_template: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
 
@@ -110,7 +113,9 @@ class ProposedAction(Base):
     rule_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("organization_rules.id"), nullable=True)
     reason: Mapped[str] = mapped_column(Text, default="")
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
-    applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    # STAGE 4: ORIGINAL AND PROPOSED FILENAMES FOR RENAME ACTIONS
+    original_filename: Mapped[str] = mapped_column(Text, default="")
+    new_filename: Mapped[str] = mapped_column(Text, default="")
     batch_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("transaction_batches.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
 
@@ -140,6 +145,8 @@ class TransactionEntry(Base):
     destination_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_size: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
+    original_filename: Mapped[str] = mapped_column(Text, default="")
+    new_filename: Mapped[str] = mapped_column(Text, default="")
     holding_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))

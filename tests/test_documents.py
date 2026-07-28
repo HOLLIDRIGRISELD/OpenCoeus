@@ -1,14 +1,69 @@
 import unittest
 
-from opencoeus.documents import suggest_title
+from opencoeus.documents import suggest_title, extract_metadata, detect_document_type
+
+
+class DetectDocumentTypeTests(unittest.TestCase):
+    def test_detects_invoice_from_text(self):
+        # VERIFIES THAT TEXT CONTAINING INVOICE KEYWORDS IS DETECTED AS INVOICE.
+        text = "Invoice #INV-2024-0315\nAmount: $1,250.00\nPayment terms: Net 30"
+        self.assertEqual(detect_document_type(text), "Invoice")
+
+    def test_detects_meeting_notes(self):
+        # VERIFIES THAT TEXT CONTAINING MEETING KEYWORDS IS DETECTED AS MEETING NOTES.
+        text = "Meeting Notes - March 2024\nAttendees: Alice, Bob\nAgenda: Review progress"
+        self.assertEqual(detect_document_type(text), "Meeting-Notes")
+
+    def test_detects_specification(self):
+        # VERIFIES THAT TEXT CONTAINING SPECIFICATION KEYWORDS IS DETECTED.
+        text = "Technical Specification\nArchitecture Overview\nRequirements"
+        self.assertEqual(detect_document_type(text), "Specification")
+
+    def test_detects_report(self):
+        # VERIFIES THAT TEXT CONTAINING REPORT KEYWORDS IS DETECTED.
+        text = "Executive Summary\nThis report covers the quarterly analysis."
+        self.assertEqual(detect_document_type(text), "Report")
+
+    def test_detects_budget(self):
+        # VERIFIES THAT TEXT CONTAINING BUDGET KEYWORDS IS DETECTED.
+        text = "Budget 2024\nRevenue: $100,000\nExpenses: $75,000"
+        self.assertEqual(detect_document_type(text), "Budget")
+
+    def test_returns_document_fallback(self):
+        # VERIFIES THAT TEXT WITH NO MATCHING KEYWORDS RETURNS "Document".
+        text = "Random text with no specific document type keywords at all"
+        self.assertEqual(detect_document_type(text), "Document")
+
+    def test_empty_text_returns_document(self):
+        # VERIFIES THAT EMPTY TEXT RETURNS THE FALLBACK "Document".
+        self.assertEqual(detect_document_type(""), "Document")
+
+    def test_metadata_also_checked(self):
+        # VERIFIES THAT METADATA IS ALSO CHECKED FOR TYPE DETECTION.
+        text = "Some random page content"
+        metadata = {"title": "Invoice for Services", "author": "Acme Corp"}
+        self.assertEqual(detect_document_type(text, metadata), "Invoice")
+
+    def test_title_candidate_checked_first(self):
+        # VERIFIES THAT THE TITLE CANDIDATE STRING IS CHECKED.
+        text = "Some random body text with no keywords at all"
+        title_candidate = "Meeting Minutes - Q2 Review"
+        self.assertEqual(detect_document_type(text, None, title_candidate), "Meeting-Notes")
 
 
 class SuggestTitleTests(unittest.TestCase):
-    def test_selects_first_candidate_line(self):
-        # VERIFIES THAT THE FIRST LINE MEETING LENGTH AND ALPHA REQUIREMENTS IS CHOSEN.
+    def test_selects_best_scored_candidate(self):
+        # VERIFIES THAT THE BEST SCORED CANDIDATE IS CHOSEN BY THE SCORING ALGORITHM.
+        # THE LINE CONTAINING A TITLE INDICATOR WORD SCORES HIGHEST.
         document_text = "Short\nThis is a proper document title with enough characters\nAnother line"
         result = suggest_title(document_text, "fallback")
         self.assertEqual(result, "This is a proper document title with enough characters")
+
+    def test_prefers_mixed_case_over_all_caps(self):
+        # VERIFIES THAT MIXED CASE LINES SCORE HIGHER THAN ALL CAPS LINES.
+        document_text = "ALL CAPS HEADER LINE\nMixed Case Title Line"
+        result = suggest_title(document_text, "fallback")
+        self.assertEqual(result, "Mixed Case Title Line")
 
     def test_uses_fallback_when_no_candidates_found(self):
         # VERIFIES THAT THE FALLBACK TITLE IS USED WHEN NO LINE MEETS THE CRITERIA.
@@ -64,8 +119,8 @@ class SuggestTitleTests(unittest.TestCase):
         self.assertEqual(result, "This line is long enough to qualify")
 
     def test_skips_too_long_lines(self):
-        # VERIFIES THAT LINES LONGER THAN 100 CHARACTERS ARE NOT SELECTED.
-        long_line = "X" * 101
+        # VERIFIES THAT LINES LONGER THAN 120 CHARACTERS ARE NOT SELECTED.
+        long_line = "X" * 121
         document_text = f"{long_line}\nThis is a reasonable title line"
         result = suggest_title(document_text, "fallback")
         self.assertEqual(result, "This is a reasonable title line")
