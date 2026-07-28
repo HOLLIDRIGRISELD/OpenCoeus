@@ -33,6 +33,8 @@ For the complete product scope, implemented capabilities, safety policy, and sta
 - 11 default rules: Documents, Photos, Music, Video, Compressed, Code, Installers, Old files archive, Duplicate consolidation, Uncategorized, and Spreadsheets.
 - Priority-based first-match-wins evaluation with pre-parsed configurations and compiled regex.
 - Destination templates with {filename}, {stem}, {extension}, {folder}, {root}, and {date_year} placeholders.
+- Rename action type alongside move/move+rename with full template engine.
+- 25+ template variables including {title}, {title_sanitized}, {date_iso}, {doc_type}, {stem_nospace}.
 
 ### Results and action management
 - Results table with 7 columns: Path, Size, Status, Duplicate of, Title, Extension, Folder.
@@ -72,6 +74,7 @@ For the complete product scope, implemented capabilities, safety policy, and sta
 - profile - create, list, show, and delete scan profiles.
 - classify - build folder tree and classify folders with optional JSON export.
 - organize - full two-phase pipeline: classify, scan, apply rules, export proposed actions.
+- rename - propose content-aware renames using title extraction and template engine with dry-run support.
 - execute - execute approved file actions with optional dry-run mode.
 - undo - reverse the last executed batch of file moves.
 
@@ -132,6 +135,12 @@ python -m opencoeus.cli organize "D:\YourFolder" --output actions.csv --profile 
 
 The organize command runs Phase 1 (classify folders), Phase 2 (scan files with exclusions), applies the rules engine, and exports proposed file actions. It never moves or removes files - every action requires explicit approval in the UI.
 
+Preview content-aware renames:
+
+`ash
+python -m opencoeus.cli rename "D:\YourFolder" --dry-run
+`
+
 Execute approved file actions (after approving in the UI):
 
 `ash
@@ -172,16 +181,17 @@ The local database is created in the platform's normal per-user data location:
 
 - **Windows:** `%LOCALAPPDATA%\OpenCoeus`
 - **macOS:** `~/Library/Application Support/OpenCoeus`
-- **Linux:** `/OpenCoeus` or `~/.local/state/OpenCoeus`
+- **Linux:** `~/.local/state/OpenCoeus`
 
 If that location is read-only, it falls back to `.opencoeus` in the working folder. Set `OPENCOEUS_DATA_DIR` to choose an explicit location. No network connection is used by this application.
 
 ## Current development focus
 
-Stage 3 (execute approved changes and recovery) is complete. The next release focuses on spreadsheet workflows:
+Stages 1-4 (safe audit, selective organisation, approved changes, smart renaming) are complete. The next release focuses on AI-powered renaming with local NLP:
 
-1. Define supported spreadsheet schemas before enabling .xlsx or .xlsm consolidation.
-2. Implement read-only spreadsheet inspection, followed by an approved master-workbook workflow.
-3. Build, package, and test on clean offline Windows, macOS, and Linux machines.
+1. Add spaCy as a runtime dependency for local NLP processing.
+2. Build NLP title extractor with keyword scoring and sentence importance ranking.
+3. Build document classifier for automatic type detection (invoice, report, contract, letter, manual, etc.).
+4. Create NamingStrategy interface with RuleBased and NLP implementations.
 
 The complete product scope and delivery stages are in [PROJECT_PLAN.md](PROJECT_PLAN.md). The actionable engineering backlog is in [TODO.md](TODO.md).

@@ -82,23 +82,23 @@ OpenCoeus is a highly specialized, locally hosted Data Lifecycle Management (DLM
 - [x] Background worker threads for execution and undo (non-blocking UI).
 - [x] Mutual exclusion guards preventing double-activation of execute/undo.
 - [x] CLI subcommands: execute (--dry-run), undo.
-- [x] 278 automated tests across 16 test files including end-to-end round-trip, partial rollback, and pre-flight hash mismatch tests.
+- [x] 312 automated tests across 16 test files including end-to-end round-trip, partial rollback, pre-flight hash mismatch, and full rename round-trip tests.
 
-### Stage 4 - smart renaming (not started)
+### Stage 4 - smart renaming (implemented)
 
-- [ ] Add {title}, {title_sanitized}, {date}, {date_month} template variables to rules engine.
-- [ ] Add "rename" action type alongside existing "move" action.
-- [ ] Create safe_rename() function in executor for same-directory renames.
-- [ ] Build smart filename constructor: title + metadata into clean filesystem name.
-- [ ] Handle rename collisions, length limits, and special character sanitisation.
-- [ ] Add proposed rename preview column to results table.
-- [ ] Add "Has suggested title" filter to results page.
-- [ ] Add approve/reject workflow for renames in actions page.
-- [ ] Add default "Smart rename documents" rule (PDF/DOCX to suggested title).
-- [ ] Add default "Photos by date" rule (rename photos to YYYY-MM-DD - name).
-- [ ] Extend transaction journal to support rename entries with rollback.
-- [ ] CLI subcommand: rename (--dry-run).
-- [ ] Tests: rename collision resolution, title extraction, template rendering, undo round-trip.
+- [x] Add {title}, {title_sanitized}, {date}, {date_month} template variables to rules engine.
+- [x] Add "rename" action type alongside existing "move" action.
+- [x] Create safe_rename() function in executor for same-directory renames.
+- [x] Build smart filename constructor: title + metadata into clean filesystem name.
+- [x] Handle rename collisions, length limits, and special character sanitisation.
+- [x] Add proposed rename preview column to results table.
+- [x] Add "Has suggested title" filter to results page.
+- [x] Add approve/reject workflow for renames in actions page.
+- [x] Add default "Smart rename documents" rule (PDF/DOCX to suggested title).
+- [x] Add default "Photos by date" rule (rename photos to YYYY-MM-DD - name).
+- [x] Extend transaction journal to support rename entries with rollback.
+- [x] CLI subcommand: rename (--dry-run).
+- [x] Tests: rename collision resolution, title extraction, template rendering, undo round-trip.
 
 ### Stage 5 - AI-powered renaming with NLP (not started)
 

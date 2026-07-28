@@ -41,21 +41,22 @@
 - [x] UI rewrite: modular package architecture, CardTable, CardTree, unified button styling, modern card-based design across all pages.
 - [x] 290 automated tests across 16 test files including end-to-end round-trip, partial rollback, pre-flight hash mismatch, and full DB state verification tests.
 
-## Next: smart renaming (Stage 4)
-
-- [ ] Add {title}, {title_sanitized}, {date}, {date_month} template variables to rules engine.
-- [ ] Add "rename" action type alongside existing "move" action.
-- [ ] Create safe_rename() function in executor for same-directory renames.
-- [ ] Build smart filename constructor: title + metadata into clean filesystem name.
-- [ ] Handle rename collisions, length limits, and special character sanitisation.
-- [ ] Add proposed rename preview column to results table.
-- [ ] Add "Has suggested title" filter to results page.
-- [ ] Add approve/reject workflow for renames in actions page.
-- [ ] Add default "Smart rename documents" rule (PDF/DOCX to suggested title).
-- [ ] Add default "Photos by date" rule (rename photos to YYYY-MM-DD - name).
-- [ ] Extend transaction journal to support rename entries with rollback.
-- [ ] CLI subcommand: rename (--dry-run).
-- [ ] Tests: rename collision resolution, title extraction, template rendering, undo round-trip.
+### Stage 4: smart renaming
+- [x] 25+ template variables ({title}, {title_sanitized}, {doc_type}, {date_iso}, {stem_nospace}, etc.) in rules engine.
+- [x] "rename" and "move+rename" action types alongside existing "move".
+- [x] Smart filename constructor in _render_rename() with _substitute_variables().
+- [x] Content-type detection (10 types: Invoice, Meeting-Notes, Specification, Report, Budget, Contract, Presentation, Readme, Backup, Spreadsheet).
+- [x] Title extraction from PDF/DOCX/TXT/MD with scoring.
+- [x] Rename collision resolution in executor.
+- [x] OS-level filename validation in safety.py.
+- [x] Rename audit trail (original_filename/new_filename on ProposedAction and TransactionEntry).
+- [x] Approve/reject workflow for renames in actions page.
+- [x] Normalization pass for rules with priority >= 25.
+- [x] "Has Suggested Title" filter on results page.
+- [x] Action type filter (All/Move/Rename/Move+Rename) in actions UI.
+- [x] CLI rename subcommand with --dry-run.
+- [x] CLI --rename-template uses full 25+ variable engine.
+- [x] 312 automated tests (22 new tests added for rename, template, collision, and undo).
 
 ## Future: AI-powered renaming with NLP (Stage 5)
 
