@@ -54,6 +54,7 @@ _EXPECTED_COLUMNS = {
     ],
     "scan_profiles": [
         ("nlp_confidence_threshold", "FLOAT DEFAULT 0.0"),
+        ("naming_strategy", "VARCHAR(16) DEFAULT 'nlp_enhanced'"),
         ("installer_action", "VARCHAR(16) DEFAULT 'skip'"),
         ("llm_enabled", "BOOLEAN DEFAULT 0"),
         ("llm_model", "VARCHAR(64) DEFAULT 'phi3'"),
@@ -175,7 +176,8 @@ class AuditStore:
                        excluded_folders: list[str] | None = None, custom_protected_patterns: list[str] | None = None,
                        document_extraction: bool = True,
                        llm_enabled: bool = False, llm_model: str = "phi3",
-                       llm_temperature: float = 0.3) -> ScanProfile:
+                       llm_temperature: float = 0.3,
+                       naming_strategy: str = "nlp_enhanced") -> ScanProfile:
         """Create and persist a new scan profile with default empty folder lists."""
         with self.session_factory() as session:
             profile = ScanProfile(
@@ -188,6 +190,7 @@ class AuditStore:
                 llm_enabled=llm_enabled,
                 llm_model=llm_model,
                 llm_temperature=llm_temperature,
+                naming_strategy=naming_strategy,
             )
             session.add(profile)
             session.commit()

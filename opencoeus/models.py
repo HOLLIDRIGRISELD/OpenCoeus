@@ -67,6 +67,7 @@ class ScanProfile(Base):
     document_extraction: Mapped[bool] = mapped_column(Boolean, default=True)
     # STAGE 5: NLP SETTINGS
     nlp_confidence_threshold: Mapped[float] = mapped_column(Float, default=0.0)
+    naming_strategy: Mapped[str] = mapped_column(String(16), default="nlp_enhanced")
     installer_action: Mapped[str] = mapped_column(String(16), default="skip")
     # STAGE 5: LLM ENHANCEMENT SETTINGS
     llm_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

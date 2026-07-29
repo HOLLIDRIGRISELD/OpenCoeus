@@ -129,56 +129,60 @@ class RulesEngine:
         sorted_rules = sorted(prepared_rules, key=lambda r: r.get("priority", 0))
         profile_excluded = set(self.profile.excluded_folders) if self.profile else set()
         profile_included = self.profile.included_folders if self.profile else []
+        # DETERMINE NAMING STRATEGY FROM PROFILE
+        strategy = self.profile.naming_strategy if self.profile else "nlp_enhanced"
         matches: list[RuleMatch] = []
-        for row in manifest_rows:
-            if row.status in {"unreadable", "protected"}:
-                continue
-            if profile_excluded and any(
-                row.folder_path.replace("\\", "/") == ex.replace("\\", "/").rstrip("/")
-                or row.folder_path.replace("\\", "/").startswith(ex.replace("\\", "/").rstrip("/") + "/")
-                for ex in profile_excluded
-            ):
-                continue
-            if profile_included and not any(
-                row.folder_path.replace("\\", "/") == inc.replace("\\", "/").rstrip("/")
-                or row.folder_path.replace("\\", "/").startswith(inc.replace("\\", "/").rstrip("/") + "/")
-                for inc in profile_included
-            ):
-                continue
-            for rule in sorted_rules:
-                if not rule.get("enabled", True):
+        if strategy in ("nlp_enhanced", "rule_based"):
+            for row in manifest_rows:
+                if row.status in {"unreadable", "protected"}:
                     continue
-                if self._rule_matches(row, rule):
-                    match = self._apply_rule(row, rule)
-                    if match is not None:
-                        if Path(match.proposed_path) != Path(match.original_path):
-                            matches.append(match)
-                            break
+                if profile_excluded and any(
+                    row.folder_path.replace("\\", "/") == ex.replace("\\", "/").rstrip("/")
+                    or row.folder_path.replace("\\", "/").startswith(ex.replace("\\", "/").rstrip("/") + "/")
+                    for ex in profile_excluded
+                ):
+                    continue
+                if profile_included and not any(
+                    row.folder_path.replace("\\", "/") == inc.replace("\\", "/").rstrip("/")
+                    or row.folder_path.replace("\\", "/").startswith(inc.replace("\\", "/").rstrip("/") + "/")
+                    for inc in profile_included
+                ):
+                    continue
+                for rule in sorted_rules:
+                    if not rule.get("enabled", True):
+                        continue
+                    if self._rule_matches(row, rule):
+                        match = self._apply_rule(row, rule)
+                        if match is not None:
+                            if Path(match.proposed_path) != Path(match.original_path):
+                                matches.append(match)
+                                break
         # NORMALIZATION PASS: APPLY RULES WITH PRIORITY >= 25 TO EXISTING MATCHES
         # SO THAT NORMALIZATION (LOWERCASE REPLACE SPACES) APPLIES EVEN TO FILES
         # ALREADY CAUGHT BY HIGHER PRIORITY CONTENT RULES
-        normalization_rules = [r for r in sorted_rules if r.get("enabled", True) and r.get("priority", 0) >= 25]
-        if normalization_rules:
-            match_lookup = {m.original_path: m for m in matches}
-            for row in manifest_rows:
-                match = match_lookup.get(row.path)
-                if match is None:
-                    continue
-                for rule in normalization_rules:
-                    if not self._rule_matches(row, rule):
+        if strategy in ("nlp_enhanced", "rule_based"):
+            normalization_rules = [r for r in sorted_rules if r.get("enabled", True) and r.get("priority", 0) >= 25]
+            if normalization_rules:
+                match_lookup = {m.original_path: m for m in matches}
+                for row in manifest_rows:
+                    match = match_lookup.get(row.path)
+                    if match is None:
                         continue
-                    rename_tpl = rule.get("rename_template", "")
-                    if not rename_tpl:
-                        continue
-                    new_filename = self._render_rename(row, rename_tpl)
-                    if new_filename and new_filename != Path(match.proposed_path).name:
-                        match.new_filename = new_filename
-                        if match.action_type == "rename":
-                            match.proposed_path = str(Path(match.original_path).parent / new_filename).replace("\\", "/")
-                        else:
-                            move_parent = str(Path(match.proposed_path).parent).replace("\\", "/")
-                            match.proposed_path = f"{move_parent}/{new_filename}"
-                        break
+                    for rule in normalization_rules:
+                        if not self._rule_matches(row, rule):
+                            continue
+                        rename_tpl = rule.get("rename_template", "")
+                        if not rename_tpl:
+                            continue
+                        new_filename = self._render_rename(row, rename_tpl)
+                        if new_filename and new_filename != Path(match.proposed_path).name:
+                            match.new_filename = new_filename
+                            if match.action_type == "rename":
+                                match.proposed_path = str(Path(match.original_path).parent / new_filename).replace("\\", "/")
+                            else:
+                                move_parent = str(Path(match.proposed_path).parent).replace("\\", "/")
+                                match.proposed_path = f"{move_parent}/{new_filename}"
+                            break
         # NLP OVERRIDE PASS: APPLY NLP-GENERATED FILENAMES/DESTINATIONS TO MATCHES
         # WITH HIGH CONFIDENCE (CONFIDENCE >= PROFILE THRESHOLD)
         if self.profile:
@@ -186,62 +190,64 @@ class RulesEngine:
         else:
             nlp_threshold = 0.0
         nlp_override_count = 0
-        for match in matches:
-            original_row = next((r for r in manifest_rows if r.path == match.original_path), None)
-            if original_row is None or original_row.nlp_confidence <= nlp_threshold:
-                continue
-            nlp_filename = original_row.smart_filename
-            if not nlp_filename:
-                nlp_filename = self._render_rename(original_row, "{nlp_topic}_{nlp_author}_{nlp_date}.{extension}")
-            nlp_override = False
-            if nlp_filename and nlp_filename != match.new_filename:
-                nlp_override = True
-                match.new_filename = nlp_filename
-                if match.action_type in ("rename",):
-                    match.proposed_path = str(Path(match.original_path).parent / nlp_filename).replace("\\", "/")
-                    match.reason += " | NLP-enhanced rename"
-                elif match.action_type in ("move", "move+rename"):
-                    move_parent = str(Path(match.proposed_path).parent).replace("\\", "/")
-                    match.proposed_path = f"{move_parent}/{nlp_filename}"
-                    if match.action_type == "move":
-                        match.action_type = "move+rename"
-                    match.reason += " | NLP-enhanced filename"
-            nlp_destination = original_row.smart_destination
-            if nlp_destination and match.action_type in ("move", "move+rename"):
-                nlp_override = True
-                match.proposed_path = f"{nlp_destination.rstrip('/')}/{nlp_filename or match.new_filename}"
-                match.action_type = "move+rename"
-                match.reason += " | NLP-enhanced destination"
-            if nlp_override:
+        # NLP OVERRIDE AND STANDALONE PASSES: ONLY RUN FOR NLP-ENABLED STRATEGIES
+        if strategy in ("nlp_enhanced", "nlp_only"):
+            for match in matches:
+                original_row = next((r for r in manifest_rows if r.path == match.original_path), None)
+                if original_row is None or original_row.nlp_confidence <= nlp_threshold:
+                    continue
+                nlp_filename = original_row.smart_filename
+                if not nlp_filename:
+                    nlp_filename = self._render_rename(original_row, "{nlp_topic}_{nlp_author}_{nlp_date}.{extension}")
+                nlp_override = False
+                if nlp_filename and nlp_filename != match.new_filename:
+                    nlp_override = True
+                    match.new_filename = nlp_filename
+                    if match.action_type in ("rename",):
+                        match.proposed_path = str(Path(match.original_path).parent / nlp_filename).replace("\\", "/")
+                        match.reason += " | NLP-enhanced rename"
+                    elif match.action_type in ("move", "move+rename"):
+                        move_parent = str(Path(match.proposed_path).parent).replace("\\", "/")
+                        match.proposed_path = f"{move_parent}/{nlp_filename}"
+                        if match.action_type == "move":
+                            match.action_type = "move+rename"
+                        match.reason += " | NLP-enhanced filename"
+                nlp_destination = original_row.smart_destination
+                if nlp_destination and match.action_type in ("move", "move+rename"):
+                    nlp_override = True
+                    match.proposed_path = f"{nlp_destination.rstrip('/')}/{nlp_filename or match.new_filename}"
+                    match.action_type = "move+rename"
+                    match.reason += " | NLP-enhanced destination"
+                if nlp_override:
+                    nlp_override_count += 1
+            # NLP STANDALONE PASS: CREATE NEW RENAME ACTIONS FOR HIGH-CONFIDENCE FILES
+            # THAT WERE NOT MATCHED BY ANY RULE
+            # REQUIRE AT LEAST MINIMAL CONFIDENCE (0.1) TO AVOID NONSENSICAL RENAMES OF
+            # EMPTY/BINARY FILES WITH NO EXTRACTED CONTENT.
+            _NLP_MIN_CONFIDENCE = 0.1
+            matched_original_paths = {m.original_path for m in matches}
+            for row in manifest_rows:
+                if row.path in matched_original_paths:
+                    continue
+                if row.nlp_confidence <= nlp_threshold or row.nlp_confidence < _NLP_MIN_CONFIDENCE:
+                    continue
+                nlp_filename = row.smart_filename
+                if not nlp_filename:
+                    continue
+                original_basename = Path(row.path).name
+                if nlp_filename == original_basename:
+                    continue
+                proposed = str(Path(row.path).parent / nlp_filename).replace("\\", "/")
+                matches.append(RuleMatch(
+                    original_path=row.path,
+                    proposed_path=proposed,
+                    action_type="rename",
+                    rule_id=None,
+                    reason="NLP-generated rename",
+                    original_filename=original_basename,
+                    new_filename=nlp_filename,
+                ))
                 nlp_override_count += 1
-        # NLP STANDALONE PASS: CREATE NEW RENAME ACTIONS FOR HIGH-CONFIDENCE FILES
-        # THAT WERE NOT MATCHED BY ANY RULE
-        # REQUIRE AT LEAST MINIMAL CONFIDENCE (0.1) TO AVOID NONSENSICAL RENAMES OF
-        # EMPTY/BINARY FILES WITH NO EXTRACTED CONTENT.
-        _NLP_MIN_CONFIDENCE = 0.1
-        matched_original_paths = {m.original_path for m in matches}
-        for row in manifest_rows:
-            if row.path in matched_original_paths:
-                continue
-            if row.nlp_confidence <= nlp_threshold or row.nlp_confidence < _NLP_MIN_CONFIDENCE:
-                continue
-            nlp_filename = row.smart_filename
-            if not nlp_filename:
-                continue
-            original_basename = Path(row.path).name
-            if nlp_filename == original_basename:
-                continue
-            proposed = str(Path(row.path).parent / nlp_filename).replace("\\", "/")
-            matches.append(RuleMatch(
-                original_path=row.path,
-                proposed_path=proposed,
-                action_type="rename",
-                rule_id=None,
-                reason="NLP-generated rename",
-                original_filename=original_basename,
-                new_filename=nlp_filename,
-            ))
-            nlp_override_count += 1
         # COLLISION DETECTION: CHECK EACH PROPOSED RENAME AGAINST OTHER SCANNED FILES
         # AND EXISTING FILESYSTEM TO SHOW THE ACTUAL DESTINATION PATH IN PREVIEW
         existing_for_collision: set[str] = set()

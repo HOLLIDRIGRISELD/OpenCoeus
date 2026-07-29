@@ -19,6 +19,7 @@ class ProfileConfig:
     document_extraction: bool = True
     # STAGE 5: NLP SETTINGS
     nlp_confidence_threshold: float = 0.0
+    naming_strategy: str = "nlp_enhanced"
     installer_action: str = "skip"
     # STAGE 5: LLM SETTINGS
     llm_enabled: bool = False
@@ -37,6 +38,7 @@ def create_profile(
     llm_enabled: bool = False,
     llm_model: str = "phi3",
     llm_temperature: float = 0.3,
+    naming_strategy: str = "nlp_enhanced",
 ) -> ProfileConfig:
     """Create a new scan profile in the database and return it as a profile config."""
     db_profile = store.create_profile(
@@ -49,6 +51,7 @@ def create_profile(
         llm_enabled=llm_enabled,
         llm_model=llm_model,
         llm_temperature=llm_temperature,
+        naming_strategy=naming_strategy,
     )
     return _db_profile_to_config(db_profile)
 
@@ -116,4 +119,5 @@ def _db_profile_to_config(db_profile: ScanProfile) -> ProfileConfig:
         llm_enabled=getattr(db_profile, 'llm_enabled', False),
         llm_model=getattr(db_profile, 'llm_model', 'phi3'),
         llm_temperature=getattr(db_profile, 'llm_temperature', 0.3),
+        naming_strategy=getattr(db_profile, 'naming_strategy', 'nlp_enhanced'),
     )

@@ -99,6 +99,22 @@ class ProfileEditDialog(QDialog):
         )
         form.addRow("Document extraction:", self.extraction_check)
 
+        self.strategy_input = QComboBox()
+        self.strategy_input.addItems(["nlp_enhanced", "rule_based", "nlp_only"])
+        self.strategy_input.setItemText(0, "NLP-enhanced (rules + NLP)")
+        self.strategy_input.setItemText(1, "Rule-based only")
+        self.strategy_input.setItemText(2, "NLP-only (no rules)")
+        self.strategy_input.setCurrentText(
+            profile.naming_strategy if profile else "nlp_enhanced"
+        )
+        self.strategy_input.setToolTip(
+            "Naming strategy:\n"
+            "NLP-enhanced – apply NLP overrides on top of rule matches + standalone NLP for unmatched files\n"
+            "Rule-based only – use rules only, no NLP\n"
+            "NLP-only – skip rules entirely, apply NLP to all files"
+        )
+        form.addRow("Naming strategy:", self.strategy_input)
+
         self.nlp_threshold_input = QDoubleSpinBox()
         self.nlp_threshold_input.setRange(0.0, 1.0)
         self.nlp_threshold_input.setSingleStep(0.05)
@@ -278,6 +294,7 @@ class ProfileEditDialog(QDialog):
             "custom_protected_patterns": self._parse_list(self.patterns_input.toPlainText()),
             "document_extraction": self.extraction_check.isChecked(),
             "nlp_confidence_threshold": self.nlp_threshold_input.value(),
+            "naming_strategy": self.strategy_input.currentText(),
             "installer_action": self.installer_action_input.currentText(),
             "llm_enabled": self.llm_enabled_check.isChecked(),
             "llm_model": self.llm_model_input.currentText(),
