@@ -52,6 +52,13 @@ _EXPECTED_COLUMNS = {
         ("original_filename", "TEXT DEFAULT ''"),
         ("new_filename", "TEXT DEFAULT ''"),
     ],
+    "scan_profiles": [
+        ("nlp_confidence_threshold", "FLOAT DEFAULT 0.0"),
+        ("installer_action", "VARCHAR(16) DEFAULT 'skip'"),
+        ("llm_enabled", "BOOLEAN DEFAULT 0"),
+        ("llm_model", "VARCHAR(64) DEFAULT 'phi3'"),
+        ("llm_temperature", "FLOAT DEFAULT 0.3"),
+    ],
 }
 
 
@@ -166,7 +173,9 @@ class AuditStore:
 
     def create_profile(self, name: str, root_path: str = "", included_folders: list[str] | None = None,
                        excluded_folders: list[str] | None = None, custom_protected_patterns: list[str] | None = None,
-                       document_extraction: bool = True) -> ScanProfile:
+                       document_extraction: bool = True,
+                       llm_enabled: bool = False, llm_model: str = "phi3",
+                       llm_temperature: float = 0.3) -> ScanProfile:
         """Create and persist a new scan profile with default empty folder lists."""
         with self.session_factory() as session:
             profile = ScanProfile(
@@ -176,6 +185,9 @@ class AuditStore:
                 excluded_folders=json.dumps(excluded_folders or []),
                 custom_protected_patterns=json.dumps(custom_protected_patterns or []),
                 document_extraction=document_extraction,
+                llm_enabled=llm_enabled,
+                llm_model=llm_model,
+                llm_temperature=llm_temperature,
             )
             session.add(profile)
             session.commit()

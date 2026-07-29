@@ -6,9 +6,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# DOCUMENT TYPE DETECTION: PATTERNS CHECKED IN PRIORITY ORDER (FIRST MATCH WINS)
-# EACH ENTRY: (type_name, compiled_regex)
-# MORE SPECIFIC TYPES CHECKED FIRST, FALLBACK TO GENERIC
 _DOC_TYPE_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("Invoice", re.compile(r"(invoice|inv[-#\s]?\d|amount\s+d(ue|ate)|billing|payment\s+terms)", re.IGNORECASE)),
     ("Meeting-Notes", re.compile(r"(meeting\s*(notes|minutes|log)|attendees?:|agenda|action\s+items)", re.IGNORECASE)),
@@ -17,9 +14,25 @@ _DOC_TYPE_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("Budget", re.compile(r"(budget|financial|revenue|expenses?|forecast|quarterly)", re.IGNORECASE)),
     ("Contract", re.compile(r"(contract|agreement|terms?\s*(and|of)\s*(service|conditions|use)|legal)", re.IGNORECASE)),
     ("Presentation", re.compile(r"(presentation|slides?|deck)", re.IGNORECASE)),
-    ("Readme", re.compile(r"(readme|getting\s+started|installation)", re.IGNORECASE)),
+    ("Readme", re.compile(r"(readme|getting\s+started)", re.IGNORECASE)),
     ("Backup", re.compile(r"(backup|archive|restore|snapshot)", re.IGNORECASE)),
     ("Spreadsheet", re.compile(r"(spreadsheet|worksheet|tab|csv|tabular)", re.IGNORECASE)),
+    ("Resume", re.compile(r"(resume|cv|curriculum\s+vitae)", re.IGNORECASE)),
+    ("Letter", re.compile(r"(dear\s+\w+|sincerely|yours\s+faithfully)", re.IGNORECASE)),
+    ("Memo", re.compile(r"(memo|memorandum|to:?|from:?|re:?|subject:?)", re.IGNORECASE)),
+    ("Article", re.compile(r"(article|abstract|introduction|methodology|references)", re.IGNORECASE)),
+    ("Proposal", re.compile(r"(proposal|statement\s+of\s+work|scope\s+of\s+work|deliverables)", re.IGNORECASE)),
+    ("Manual", re.compile(r"(manual|guide|tutorial|user\s+guide|reference)", re.IGNORECASE)),
+    ("Certificate", re.compile(r"(certificate|certification|completion|certified)", re.IGNORECASE)),
+    ("Form", re.compile(r"(form|application|registration|questionnaire)", re.IGNORECASE)),
+    ("Policy", re.compile(r"(policy|procedure|compliance|regulation)", re.IGNORECASE)),
+    ("Checklist", re.compile(r"(checklist|check\s*list|todo|tasks)", re.IGNORECASE)),
+    ("Thesis", re.compile(r"(thesis|dissertation|doctoral|master['\u2019]s\s+thesis)", re.IGNORECASE)),
+    ("Agenda", re.compile(r"(agenda|schedule|timeline|itinerary)", re.IGNORECASE)),
+    ("Newsletter", re.compile(r"(newsletter|news\s*letter|issue\s+\d)", re.IGNORECASE)),
+    ("Order", re.compile(r"(order|purchase\s+order|po\s*[-\s]?\d+)", re.IGNORECASE)),
+    ("Quote", re.compile(r"(quote|quotation|estimate|price\s+list)", re.IGNORECASE)),
+    ("Timesheet", re.compile(r"(timesheet|time\s*sheet|time\s+tracking|hours)", re.IGNORECASE)),
 ]
 
 # LINES MATCHING THESE PATTERNS ARE LIKELY HEADERS, FOOTERS, OR PAGE NUMBERS
@@ -80,13 +93,10 @@ def extract_text(document_path: Path, maximum_pages: int = 2) -> str:
             from pypdf import PdfReader
             pdf_reader = PdfReader(str(document_path))
             text_parts: list[str] = []
-            for pdf_page in pdf_reader.pages[:maximum_pages]:
-                # TRY LAYOUT MODE FIRST FOR BETTER STRUCTURED TEXT
+            for pdf_page in pdf_reader.pages[:maximum_pages] if maximum_pages < 999 else pdf_reader.pages:
                 page_text = pdf_page.extract_text(extraction_mode="layout") or ""
-                # FALLBACK TO PLAIN MODE IF LAYOUT RETURNS NOTHING
                 if not page_text.strip():
                     page_text = pdf_page.extract_text() or ""
-                # FALLBACK TO ANNOTATION TEXT
                 if not page_text.strip():
                     page_text = _extract_pdf_text_annotations(pdf_page)
                 text_parts.append(page_text)
@@ -94,24 +104,59 @@ def extract_text(document_path: Path, maximum_pages: int = 2) -> str:
         if document_path.suffix.lower() == ".docx":
             from docx import Document
             word_document = Document(str(document_path))
-            return "\n".join(paragraph.text for paragraph in word_document.paragraphs[:80])
+            paragraphs = word_document.paragraphs[:80] if maximum_pages < 999 else word_document.paragraphs
+            return "\n".join(p.text for p in paragraphs)
         if document_path.suffix.lower() in {".txt", ".md"}:
-            # READ FIRST 15 LINES FOR TITLE EXTRACTION
             lines: list[str] = []
             with open(document_path, "r", encoding="utf-8", errors="replace") as text_file:
-                for line_number, line in enumerate(text_file):
-                    if line_number >= 15:
-                        break
-                    lines.append(line)
-            return "\n".join(lines)
+                if maximum_pages < 999:
+                    for line_number, line in enumerate(text_file):
+                        if line_number >= 15:
+                            break
+                        lines.append(line)
+                else:
+                    lines = text_file.readlines()
+            return "".join(lines)
+        if document_path.suffix.lower() in {".xlsx", ".xls"}:
+            return _extract_xlsx_text(document_path)
+        if document_path.suffix.lower() == ".csv":
+            return _extract_csv_text(document_path)
     except Exception as exc:
-        logger.warning("Text extraction failed for %s: %s", document_path, exc)
+        logger.debug("Text extraction failed for %s: %s", document_path, exc)
         return ""
     return ""
 
 
+def _extract_xlsx_text(file_path: Path) -> str:
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        texts = []
+        for sheet_name in wb.sheetnames[:3]:
+            ws = wb[sheet_name]
+            texts.append(f"Sheet: {sheet_name}")
+            for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
+                if row_idx >= 20:
+                    break
+                row_text = " | ".join(str(c) for c in row if c is not None)
+                if row_text.strip():
+                    texts.append(row_text)
+        wb.close()
+        return "\n".join(texts)
+    except Exception:
+        return ""
+
+
+def _extract_csv_text(file_path: Path) -> str:
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read(65536)
+    except Exception:
+        return ""
+
+
 def extract_metadata(document_path: Path) -> dict:
-    """Extract metadata from documents: PDF author, creation date, keywords."""
+    """Extract metadata from documents: PDF/DOCX author, title, creation date."""
     metadata: dict = {}
     try:
         if document_path.suffix.lower() == ".pdf":
@@ -126,6 +171,22 @@ def extract_metadata(document_path: Path) -> dict:
                 if info.creation_date:
                     metadata["created_date"] = info.creation_date.strftime("%Y-%m-%d")
                     metadata["created_month"] = info.creation_date.strftime("%m")
+        if document_path.suffix.lower() == ".docx":
+            from docx import Document
+            word_document = Document(str(document_path))
+            try:
+                props = word_document.core_properties
+                if props.author:
+                    metadata["author"] = props.author
+                if props.title:
+                    metadata["title"] = props.title
+                if props.subject:
+                    metadata["subject"] = props.subject
+                if props.created:
+                    metadata["created_date"] = props.created.strftime("%Y-%m-%d")
+                    metadata["created_month"] = props.created.strftime("%m")
+            except Exception:
+                pass
     except Exception as exc:
         logger.debug("Metadata extraction failed for %s: %s", document_path, exc)
     return metadata

@@ -17,6 +17,13 @@ class ProfileConfig:
     excluded_folders: list[str] = field(default_factory=list)
     custom_protected_patterns: list[str] = field(default_factory=list)
     document_extraction: bool = True
+    # STAGE 5: NLP SETTINGS
+    nlp_confidence_threshold: float = 0.0
+    installer_action: str = "skip"
+    # STAGE 5: LLM SETTINGS
+    llm_enabled: bool = False
+    llm_model: str = "phi3"
+    llm_temperature: float = 0.3
 
 
 def create_profile(
@@ -27,6 +34,9 @@ def create_profile(
     excluded_folders: list[str] | None = None,
     custom_protected_patterns: list[str] | None = None,
     document_extraction: bool = True,
+    llm_enabled: bool = False,
+    llm_model: str = "phi3",
+    llm_temperature: float = 0.3,
 ) -> ProfileConfig:
     """Create a new scan profile in the database and return it as a profile config."""
     db_profile = store.create_profile(
@@ -36,6 +46,9 @@ def create_profile(
         excluded_folders=excluded_folders,
         custom_protected_patterns=custom_protected_patterns,
         document_extraction=document_extraction,
+        llm_enabled=llm_enabled,
+        llm_model=llm_model,
+        llm_temperature=llm_temperature,
     )
     return _db_profile_to_config(db_profile)
 
@@ -98,4 +111,9 @@ def _db_profile_to_config(db_profile: ScanProfile) -> ProfileConfig:
         excluded_folders=_safe_json_list(db_profile.excluded_folders),
         custom_protected_patterns=_safe_json_list(db_profile.custom_protected_patterns),
         document_extraction=db_profile.document_extraction,
+        nlp_confidence_threshold=getattr(db_profile, 'nlp_confidence_threshold', 0.0),
+        installer_action=getattr(db_profile, 'installer_action', 'skip'),
+        llm_enabled=getattr(db_profile, 'llm_enabled', False),
+        llm_model=getattr(db_profile, 'llm_model', 'phi3'),
+        llm_temperature=getattr(db_profile, 'llm_temperature', 0.3),
     )

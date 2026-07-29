@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -65,6 +65,13 @@ class ScanProfile(Base):
     excluded_folders: Mapped[str] = mapped_column(Text, default="[]")
     custom_protected_patterns: Mapped[str] = mapped_column(Text, default="[]")
     document_extraction: Mapped[bool] = mapped_column(Boolean, default=True)
+    # STAGE 5: NLP SETTINGS
+    nlp_confidence_threshold: Mapped[float] = mapped_column(Float, default=0.0)
+    installer_action: Mapped[str] = mapped_column(String(16), default="skip")
+    # STAGE 5: LLM ENHANCEMENT SETTINGS
+    llm_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    llm_model: Mapped[str] = mapped_column(String(64), default="phi3")
+    llm_temperature: Mapped[float] = mapped_column(Float, default=0.3)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
 

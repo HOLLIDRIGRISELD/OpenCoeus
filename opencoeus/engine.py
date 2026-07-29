@@ -9,11 +9,14 @@ from pathlib import Path
 from typing import Callable
 
 from .config import ScanSettings
+from .content_extractor import extract_all, _get_category
 from .database import AuditStore
 from .documents import extract_text, suggest_title, detect_document_type, extract_metadata
 from .folder_classifier import classify_tree
 from .folder_tree import build_folder_tree, flatten_tree
 from .hashing import sha256_file
+from .llm_engine import LLMConfig, LLMEngine
+from .nlp_engine import NLPEngine
 from .safety import is_protected
 from .scanner import FileRecord, iter_files
 
@@ -42,6 +45,20 @@ class ManifestRow:
     date_full: str = ""
     # STAGE 5: CONTENT-AWARE DOCUMENT TYPE
     doc_type: str = ""
+    # STAGE 5: NLP-ENRICHED METADATA
+    nlp_topic: str = ""
+    nlp_author: str = ""
+    nlp_organization: str = ""
+    nlp_project: str = ""
+    nlp_summary: str = ""
+    nlp_confidence: float = 0.0
+    nlp_date: str = ""
+    nlp_location: str = ""
+    nlp_camera: str = ""
+    nlp_artist: str = ""
+    nlp_album: str = ""
+    smart_filename: str = ""
+    smart_destination: str = ""
 
 
 @dataclass
@@ -57,10 +74,24 @@ class ScanResult:
         return sum(row.status == "duplicate" for row in self.rows)
 
 
+_NLP_SKIP_CATEGORIES = frozenset({"installer", "system", "temp"})
+
+
 class ScanEngine:
 
     def __init__(self, settings: ScanSettings, store: AuditStore | None = None) -> None:
         self.settings, self.store = settings, store or AuditStore()
+        profile = getattr(settings, 'profile', None)
+        llm_config = None
+        if profile and profile.llm_enabled:
+            llm_config = LLMConfig(
+                enabled=True,
+                model=profile.llm_model,
+                temperature=profile.llm_temperature,
+            )
+        llm_engine = LLMEngine(llm_config) if llm_config else None
+        nlp_threshold = profile.nlp_confidence_threshold if profile else 0.0
+        self.nlp_engine = NLPEngine(confidence_threshold=nlp_threshold, llm_engine=llm_engine)
 
     def run(self, progress_callback: Callable[[str], None] | None = None) -> ScanResult:
         # BACKWARD-COMPATIBLE SINGLE-PHASE SCAN FOR STAGE 1 CLI
@@ -139,12 +170,39 @@ class ScanEngine:
                     scan_result.errors.append(f"Cannot hash {file_record.path}: {file_error}")
             suggested_title = ""
             doc_type = ""
-            if use_extraction and file_status in {"unique", "protected"} and file_record.path.suffix.lower() in {".pdf", ".docx", ".txt", ".md"}:
-                extracted_text = extract_text(file_record.path)
-                suggested_title = suggest_title(extracted_text, file_record.path.stem)
-                suggested_title = self.store.reserve_title(suggested_title, str(file_record.path))
-                metadata = extract_metadata(file_record.path) if file_record.path.suffix.lower() in {".pdf", ".docx"} else {}
-                doc_type = detect_document_type(extracted_text, metadata, suggested_title)
+            nlp_topic = nlp_author = nlp_organization = nlp_project = ""
+            nlp_summary = nlp_date = nlp_location = nlp_camera = nlp_artist = nlp_album = ""
+            smart_filename = smart_destination = ""
+            nlp_confidence = 0.0
+            category = ""
+            if use_extraction and file_status in {"unique", "protected"}:
+                ext = file_record.path.suffix.lower()
+                category = _get_category(ext)
+                if ext in {".pdf", ".docx", ".txt", ".md"}:
+                    extracted_text = extract_text(file_record.path)
+                    suggested_title = suggest_title(extracted_text, file_record.path.stem)
+                    suggested_title = self.store.reserve_title(suggested_title, str(file_record.path))
+                    metadata = extract_metadata(file_record.path) if ext in {".pdf", ".docx"} else {}
+                    doc_type = detect_document_type(extracted_text, metadata, suggested_title)
+                if category not in _NLP_SKIP_CATEGORIES:
+                    try:
+                        signals = extract_all(file_record.path)
+                        nlp_result = self.nlp_engine.analyze(file_record.path, signals, file_record.path.stem)
+                        nlp_topic = nlp_result.topic
+                        nlp_author = nlp_result.author
+                        nlp_organization = nlp_result.organization
+                        nlp_project = nlp_result.project
+                        nlp_summary = nlp_result.summary
+                        nlp_confidence = nlp_result.confidence
+                        nlp_date = nlp_result.date
+                        nlp_location = nlp_result.location
+                        nlp_camera = nlp_result.camera_model
+                        nlp_artist = nlp_result.artist
+                        nlp_album = nlp_result.album
+                        smart_filename = nlp_result.smart_filename
+                        smart_destination = nlp_result.smart_destination
+                    except Exception as nlp_error:
+                        logger.debug("NLP analysis failed for %s: %s", file_record.path, nlp_error)
             batch_records.append((
                 str(file_record.path), file_record.size, file_hash or None, file_status,
                 file_record.relative_path, file_record.extension,
@@ -168,6 +226,19 @@ class ScanEngine:
                 date_month=file_record.modified_at.strftime("%m") if file_record.modified_at else "",
                 date_day=file_record.modified_at.strftime("%d") if file_record.modified_at else "",
                 date_full=file_record.modified_at.strftime("%Y-%m-%d %H:%M") if file_record.modified_at else "",
+                nlp_topic=nlp_topic,
+                nlp_author=nlp_author,
+                nlp_organization=nlp_organization,
+                nlp_project=nlp_project,
+                nlp_summary=nlp_summary,
+                nlp_confidence=nlp_confidence,
+                nlp_date=nlp_date,
+                nlp_location=nlp_location,
+                nlp_camera=nlp_camera,
+                nlp_artist=nlp_artist,
+                nlp_album=nlp_album,
+                smart_filename=smart_filename,
+                smart_destination=smart_destination,
             ))
         self.store.record_files_batch(batch_records)
 
@@ -198,6 +269,10 @@ def write_manifest(scan_result: ScanResult, destination_path: Path) -> None:
             "relative_path", "extension", "modified_at", "folder_path",
             "size_kb", "size_mb", "date_iso", "date_month", "date_day", "date_full",
             "doc_type",
+            "nlp_topic", "nlp_author", "nlp_organization", "nlp_project",
+            "nlp_summary", "nlp_confidence", "nlp_date", "nlp_location",
+            "nlp_camera", "nlp_artist", "nlp_album",
+            "smart_filename", "smart_destination",
         ])
         csv_writer.writeheader()
         csv_writer.writerows(manifest_row.__dict__ for manifest_row in scan_result.rows)

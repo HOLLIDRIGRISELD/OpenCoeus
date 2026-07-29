@@ -347,7 +347,7 @@ def _execute_batch_inner(
             result.completed += 1
             if progress_callback:
                 action_label = "Renamed" if entry.action_type == "rename" else "Completed"
-                progress_callback(f"{action_label}: {source.name} -> {actual_dest.name}")
+                progress_callback(f"{action_label}: {Path(entry.source_path).name} -> {actual_dest.name}")
         except Exception as exc:
             store.update_entry(entry.id, status=EntryStatus.FAILED, error_message=str(exc))
             result.errors.append(f"Failed to move {entry.source_path} to destination: {exc}")

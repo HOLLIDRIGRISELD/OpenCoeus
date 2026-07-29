@@ -19,8 +19,8 @@ from .common import (
 )
 
 
-# COLUMN WIDTHS FOR ACTIONS TABLE: [ID, Status, Action, Source, Target, Old Name, New Name, Rule].
-_ACTIONS_COL_WIDTHS = [50, 110, 70, 200, 200, 120, 120, 80]
+# COLUMN WIDTHS FOR ACTIONS TABLE: [ID, Status, Action, Source, Target, Old Name, New Name, Rule, NLP].
+_ACTIONS_COL_WIDTHS = [50, 110, 70, 200, 200, 120, 120, 80, 50]
 
 # COLUMN WIDTHS FOR BATCH HISTORY: [BatchID, Description, Status, Actions, Date].
 _BATCH_COL_WIDTHS = [60, 200, 110, 60, 160]
@@ -93,7 +93,7 @@ class ActionsPage(QWidget):
 
         # ACTIONS TABLE (CARD-BASED).
         self.actions_table = CardTable(
-            ["ID", "Status", "Action", "Source", "Target", "Old Name", "New Name", "Rule"],
+            ["ID", "Status", "Action", "Source", "Target", "Old Name", "New Name", "Rule", "NLP"],
             column_widths=_ACTIONS_COL_WIDTHS,
         )
         self.actions_table.row_double_clicked.connect(self._on_action_double_clicked)
@@ -194,6 +194,9 @@ class ActionsPage(QWidget):
             else:
                 action_badge = status_badge(action_type, COLORS.get('text', '#e2e8f0'), COLORS.get('surface2', '#1f2038'))
 
+            is_nlp = "NLP" in (match.reason or "")
+            nlp_badge = status_badge("NLP", COLORS.get('accent', '#38bdf8'), COLORS.get('surface2', '#1f2038')) if is_nlp else QLabel("")
+
             self.actions_table.addRow(
                 widgets=[
                     (str(db_id) if db_id else "", None),
@@ -204,11 +207,13 @@ class ActionsPage(QWidget):
                     (match.original_filename, None),
                     (match.new_filename if match.new_filename else "", None),
                     (str(match.rule_id) if match.rule_id else "", None),
+                    ("", nlp_badge),
                 ],
                 tooltips=[
                     "", "", match.action_type,
                     match.original_path, match.proposed_path,
                     match.original_filename, match.new_filename, match.reason,
+                    "NLP-enhanced" if is_nlp else "",
                 ],
             )
 

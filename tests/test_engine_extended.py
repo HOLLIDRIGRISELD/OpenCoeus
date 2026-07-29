@@ -80,6 +80,10 @@ class WriteManifestTests(unittest.TestCase):
                     "relative_path", "extension", "modified_at", "folder_path",
                     "size_kb", "size_mb", "date_iso", "date_month", "date_day", "date_full",
                     "doc_type",
+                    "nlp_topic", "nlp_author", "nlp_organization", "nlp_project",
+                    "nlp_summary", "nlp_confidence", "nlp_date", "nlp_location",
+                    "nlp_camera", "nlp_artist", "nlp_album",
+                    "smart_filename", "smart_destination",
                 ])
 
     def test_empty_result_produces_header_only_csv(self):

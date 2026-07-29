@@ -179,6 +179,69 @@ class RulesEngine:
                             move_parent = str(Path(match.proposed_path).parent).replace("\\", "/")
                             match.proposed_path = f"{move_parent}/{new_filename}"
                         break
+        # NLP OVERRIDE PASS: APPLY NLP-GENERATED FILENAMES/DESTINATIONS TO MATCHES
+        # WITH HIGH CONFIDENCE (CONFIDENCE >= PROFILE THRESHOLD)
+        if self.profile:
+            nlp_threshold = self.profile.nlp_confidence_threshold
+        else:
+            nlp_threshold = 0.0
+        nlp_override_count = 0
+        for match in matches:
+            original_row = next((r for r in manifest_rows if r.path == match.original_path), None)
+            if original_row is None or original_row.nlp_confidence <= nlp_threshold:
+                continue
+            nlp_filename = original_row.smart_filename
+            if not nlp_filename:
+                nlp_filename = self._render_rename(original_row, "{nlp_topic}_{nlp_author}_{nlp_date}.{extension}")
+            nlp_override = False
+            if nlp_filename and nlp_filename != match.new_filename:
+                nlp_override = True
+                match.new_filename = nlp_filename
+                if match.action_type in ("rename",):
+                    match.proposed_path = str(Path(match.original_path).parent / nlp_filename).replace("\\", "/")
+                    match.reason += " | NLP-enhanced rename"
+                elif match.action_type in ("move", "move+rename"):
+                    move_parent = str(Path(match.proposed_path).parent).replace("\\", "/")
+                    match.proposed_path = f"{move_parent}/{nlp_filename}"
+                    if match.action_type == "move":
+                        match.action_type = "move+rename"
+                    match.reason += " | NLP-enhanced filename"
+            nlp_destination = original_row.smart_destination
+            if nlp_destination and match.action_type in ("move", "move+rename"):
+                nlp_override = True
+                match.proposed_path = f"{nlp_destination.rstrip('/')}/{nlp_filename or match.new_filename}"
+                match.action_type = "move+rename"
+                match.reason += " | NLP-enhanced destination"
+            if nlp_override:
+                nlp_override_count += 1
+        # NLP STANDALONE PASS: CREATE NEW RENAME ACTIONS FOR HIGH-CONFIDENCE FILES
+        # THAT WERE NOT MATCHED BY ANY RULE
+        # REQUIRE AT LEAST MINIMAL CONFIDENCE (0.1) TO AVOID NONSENSICAL RENAMES OF
+        # EMPTY/BINARY FILES WITH NO EXTRACTED CONTENT.
+        _NLP_MIN_CONFIDENCE = 0.1
+        matched_original_paths = {m.original_path for m in matches}
+        for row in manifest_rows:
+            if row.path in matched_original_paths:
+                continue
+            if row.nlp_confidence <= nlp_threshold or row.nlp_confidence < _NLP_MIN_CONFIDENCE:
+                continue
+            nlp_filename = row.smart_filename
+            if not nlp_filename:
+                continue
+            original_basename = Path(row.path).name
+            if nlp_filename == original_basename:
+                continue
+            proposed = str(Path(row.path).parent / nlp_filename).replace("\\", "/")
+            matches.append(RuleMatch(
+                original_path=row.path,
+                proposed_path=proposed,
+                action_type="rename",
+                rule_id=None,
+                reason="NLP-generated rename",
+                original_filename=original_basename,
+                new_filename=nlp_filename,
+            ))
+            nlp_override_count += 1
         # COLLISION DETECTION: CHECK EACH PROPOSED RENAME AGAINST OTHER SCANNED FILES
         # AND EXISTING FILESYSTEM TO SHOW THE ACTUAL DESTINATION PATH IN PREVIEW
         existing_for_collision: set[str] = set()
@@ -421,5 +484,19 @@ class RulesEngine:
         # DOCUMENT TYPE VARIABLES
         result = result.replace("{doc_type}", row.doc_type if row.doc_type else "Document")
         result = result.replace("{doc_type_lower}", (row.doc_type if row.doc_type else "document").lower())
+
+        # NLP VARIABLES
+        result = result.replace("{nlp_topic}", row.nlp_topic if row.nlp_topic else stem)
+        result = result.replace("{nlp_author}", row.nlp_author if row.nlp_author else "Unknown")
+        result = result.replace("{nlp_organization}", row.nlp_organization if row.nlp_organization else "Unknown")
+        result = result.replace("{nlp_project}", row.nlp_project if row.nlp_project else "Unknown")
+        result = result.replace("{nlp_summary}", row.nlp_summary if row.nlp_summary else "")
+        result = result.replace("{nlp_confidence}", f"{row.nlp_confidence:.2f}" if row.nlp_confidence else "0.00")
+        result = result.replace("{nlp_date}", row.nlp_date if row.nlp_date else row.date_iso if row.date_iso else "unknown")
+        result = result.replace("{nlp_location}", row.nlp_location if row.nlp_location else "Unknown")
+        result = result.replace("{nlp_camera}", row.nlp_camera if row.nlp_camera else "Unknown")
+        result = result.replace("{nlp_artist}", row.nlp_artist if row.nlp_artist else "Unknown")
+        result = result.replace("{nlp_album}", row.nlp_album if row.nlp_album else "Unknown")
+        result = result.replace("{nlp_doc_type}", row.doc_type if row.doc_type else "Document")
 
         return result

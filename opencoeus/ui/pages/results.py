@@ -23,8 +23,9 @@ from .common import (
     status_badge, truncate_path, fmt_size,
 )
 
-# COLUMN WIDTHS FOR RESULTS TABLE: [Name, Suggested, Path, Size, Modified, Status, Hash, Group].
-_RESULTS_COL_WIDTHS = [180, 180, 250, 80, 120, 110, 100, 60]
+# COLUMN WIDTHS FOR RESULTS TABLE: [Name, Suggested, Path, Size, Modified, Status, Hash, Group,
+# Topic, Author, Org, Conf].
+_RESULTS_COL_WIDTHS = [160, 160, 220, 70, 100, 90, 80, 50, 100, 80, 80, 60, 160]
 
 
 class ResultsPage(QWidget):
@@ -67,7 +68,8 @@ class ResultsPage(QWidget):
 
         # RESULTS TABLE (CARD-BASED).
         self.results_table = CardTable(
-            ["Name", "Suggested", "Path", "Size", "Modified", "Status", "Hash", "Group"],
+            ["Name", "Suggested", "Path", "Size", "Modified", "Status", "Hash", "Group",
+             "Topic", "Author", "Org", "Conf", "Dest"],
             column_widths=_RESULTS_COL_WIDTHS,
         )
         self.results_table.row_double_clicked.connect(self._on_result_double_clicked)
@@ -104,9 +106,12 @@ class ResultsPage(QWidget):
             self._add_result_row(
                 name, suggested, entry.path, entry.size, entry.modified_at,
                 entry.status, entry.sha256, entry.duplicate_of,
+                entry.nlp_topic, entry.nlp_author, entry.nlp_organization,
+                entry.nlp_confidence, entry.smart_destination,
             )
 
-    def _add_result_row(self, name, suggested, path, size, modified, status, file_hash, group):
+    def _add_result_row(self, name, suggested, path, size, modified, status, file_hash, group,
+                        nlp_topic="", nlp_author="", nlp_org="", nlp_conf=0.0, nlp_dest=""):
         """Add a single row to the results table."""
         if status == "duplicate":
             badge = status_badge(status.upper(), COLORS['red'], COLORS.get('red_bg', '#3b1518'))
@@ -117,6 +122,7 @@ class ResultsPage(QWidget):
         else:
             badge = status_badge(status.upper(), COLORS['text'], COLORS.get('surface2', '#1f2038'))
 
+        conf_text = f"{nlp_conf:.0%}" if nlp_conf > 0 else ""
         self.results_table.addRow(
             widgets=[
                 (name, None),
@@ -127,9 +133,16 @@ class ResultsPage(QWidget):
                 ("", badge),
                 (file_hash[:12] if file_hash else "", None),
                 (str(group) if group else "", None),
+                (nlp_topic if nlp_topic else "", None),
+                (nlp_author if nlp_author else "", None),
+                (nlp_org if nlp_org else "", None),
+                (conf_text, None),
+                (nlp_dest if nlp_dest else "", None),
             ],
             tooltips=[
                 name, suggested, path, "", "", "", file_hash or "", "",
+                nlp_topic, nlp_author, nlp_org, f"{nlp_conf:.0%}" if nlp_conf > 0 else "",
+                nlp_dest,
             ],
         )
 
@@ -178,6 +191,8 @@ class ResultsPage(QWidget):
             self._add_result_row(
                 name, suggested, entry.path, entry.size, entry.modified_at,
                 entry.status, entry.sha256, entry.duplicate_of,
+                entry.nlp_topic, entry.nlp_author, entry.nlp_organization,
+                entry.nlp_confidence, entry.smart_destination,
             )
 
     def _show_duplicate_groups(self, search_text: str):
@@ -214,6 +229,8 @@ class ResultsPage(QWidget):
                 suggested,
                 original.path, original.size, original.modified_at,
                 f"{dup_count} duplicates", original.sha256, original.duplicate_of,
+                original.nlp_topic, original.nlp_author, original.nlp_organization,
+                original.nlp_confidence, original.smart_destination,
             )
 
     # DOUBLE CLICK TO OPEN FILE

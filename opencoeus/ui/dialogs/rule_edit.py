@@ -60,7 +60,7 @@ class RuleEditDialog(QDialog):
         # STAGE 4: RENAME TEMPLATE INPUT
         self.rename_input = QLineEdit(self.rule.get("rename_template", ""))
         self.rename_input.setPlaceholderText("{title}{extension}")
-        self.rename_input.setToolTip("Template for the new filename.\nAvailable variables: {filename}, {stem}, {extension}, {title}, {title_sanitized}, {date_iso}, {date_year}, {date_month}, {date_day}, {date_full}, {size_kb}, {size_mb}")
+        self.rename_input.setToolTip("Template for the new filename.\nAvailable variables: {filename}, {stem}, {extension}, {title}, {title_sanitized}, {date_iso}, {date_year}, {date_month}, {date_day}, {date_full}, {size_kb}, {size_mb}, {nlp_topic}, {nlp_author}, {nlp_date}, {nlp_doc_type}")
         layout.addRow("Rename To:", self.rename_input)
 
         self.config_input = QLineEdit(self.rule.get("rule_config", "{}"))
@@ -79,7 +79,9 @@ class RuleEditDialog(QDialog):
         # STAGE 4: TEMPLATE VARIABLES HELP
         variables_help = QLabel(
             "Template variables: {filename}, {stem}, {extension}, {title}, {title_sanitized}, "
-            "{date_iso}, {date_year}, {date_month}, {date_day}, {date_full}, {size_kb}, {size_mb}, {folder}, {root}"
+            "{date_iso}, {date_year}, {date_month}, {date_day}, {date_full}, {size_kb}, {size_mb}, {folder}, {root}\n"
+            "NLP: {nlp_topic}, {nlp_author}, {nlp_organization}, {nlp_project}, {nlp_summary}, "
+            "{nlp_confidence}, {nlp_date}, {nlp_location}, {nlp_camera}, {nlp_artist}, {nlp_album}, {nlp_doc_type}"
         )
         variables_help.setStyleSheet(f"color: {COLORS.get('text3', '#64748b')}; font-size: 10px;")
         variables_help.setWordWrap(True)
