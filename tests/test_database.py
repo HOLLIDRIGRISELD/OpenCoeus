@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opencoeus.database import AuditStore
+from opencoeus.db import AuditStore
 
 
 class AuditStoreRecordTests(unittest.TestCase):
@@ -964,7 +964,7 @@ class AuditStoreTransactionEntryTests(unittest.TestCase):
 class EnsureColumnsTests(unittest.TestCase):
     def test_ensure_columns_adds_missing_columns(self):
         # VERIFIES THAT _ensure_columns ADDS COLUMNS MISSING FROM AN OLDER DATABASE.
-        from opencoeus.database import _ensure_columns
+        from opencoeus.db import ensure_columns
         from sqlalchemy import create_engine, inspect, text
         with tempfile.TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "old.sqlite3"
@@ -992,7 +992,7 @@ class EnsureColumnsTests(unittest.TestCase):
             engine.dispose()
             # RECREATE ENGINE AND RUN _ensure_columns (SIMULATES APP STARTUP).
             engine2 = create_engine(f"sqlite:///{database_path.as_posix()}")
-            _ensure_columns(engine2)
+            ensure_columns(engine2)
             engine2.dispose()
             # VERIFY THE COLUMNS WERE ADDED WITH A FRESH ENGINE.
             engine3 = create_engine(f"sqlite:///{database_path.as_posix()}")
@@ -1004,12 +1004,12 @@ class EnsureColumnsTests(unittest.TestCase):
 
     def test_ensure_columns_is_idempotent(self):
         # VERIFIES THAT _ensure_columns DOES NOT FAIL WHEN COLUMNS ALREADY EXIST.
-        from opencoeus.database import _ensure_columns
+        from opencoeus.db import ensure_columns
         with tempfile.TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "test.sqlite3"
             store = AuditStore(f"sqlite:///{database_path.as_posix()}")
             # RUNNING AGAIN SHOULD NOT RAISE.
-            _ensure_columns(store.engine)
+            ensure_columns(store.engine)
             store.close()
 
 
@@ -1029,7 +1029,7 @@ class DeleteProfileCascadeTests(unittest.TestCase):
             self.assertTrue(result)
             # VERIFY BATCHES AND ENTRIES ARE DELETED.
             from sqlalchemy import select
-            from opencoeus.models import TransactionBatch, TransactionEntry
+            from opencoeus.db import TransactionBatch, TransactionEntry
             with store.session_factory() as session:
                 remaining_batches = list(session.scalars(
                     select(TransactionBatch).where(TransactionBatch.scan_profile_id == profile.id)

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opencoeus.hashing import sha256_file
+from opencoeus.core.hashing import sha256_file
 
 
 class HashingTests(unittest.TestCase):

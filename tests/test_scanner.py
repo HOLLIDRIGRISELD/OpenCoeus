@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opencoeus.scanner import FileRecord, iter_files
+from opencoeus.core.file_scan import iter_files
 
 
 class ScannerBasicTests(unittest.TestCase):
@@ -114,6 +114,19 @@ class ScannerBasicTests(unittest.TestCase):
             discovered_files = list(iter_files(test_root))
             discovered_names = {record.path.name for record in discovered_files}
             self.assertEqual(discovered_names, {"report.txt", "image.png", "data.csv", "nested.txt"})
+
+    def test_skips_junk_files(self):
+        # VERIFIES THAT APPLEDOUBLE, THUMBS.DB AND DESKTOP.INI FILES ARE NOT DISCOVERED.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            test_root = Path(temporary_directory)
+            (test_root / "report.pdf").write_bytes(b"%PDF-1.4")
+            (test_root / "._D4 HATCH COVERS.pdf").write_bytes(b"AppleDouble")
+            (test_root / "Thumbs.db").write_bytes(b"cache")
+            (test_root / "Desktop.ini").write_text("[.ShellClassInfo]")
+            (test_root / ".DS_Store").write_bytes(b"\x00\x01")
+            discovered_files = list(iter_files(test_root))
+            discovered_names = {record.path.name for record in discovered_files}
+            self.assertEqual(discovered_names, {"report.pdf"})
 
 
 if __name__ == "__main__":

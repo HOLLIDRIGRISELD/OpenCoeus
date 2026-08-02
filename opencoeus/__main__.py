@@ -5,8 +5,9 @@ import sys
 def main() -> int:
     # IF NO ARGS OR GUI, LAUNCH THE GUI
     if len(sys.argv) <= 1 or sys.argv[1] == "gui":
-        from opencoeus.ui import main as gui_main
-        return gui_main()
+        from opencoeus.ui import run_ui
+        run_ui()
+        return 0
     # OTHERWISE, RUN THE CLI
     from opencoeus.cli import main as cli_main
     return cli_main()

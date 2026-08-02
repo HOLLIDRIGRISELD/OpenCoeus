@@ -2,12 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opencoeus.folder_tree import (
+from opencoeus.core.folder_tree import (
     FolderNode,
     build_folder_tree,
     flatten_tree,
-    find_node,
-    set_folder_exclusion,
 )
 from opencoeus.config import default_protected_patterns
 
@@ -37,9 +35,10 @@ class BuildFolderTreeTests(unittest.TestCase):
             root = Path(temporary_directory)
             (root / "a" / "b" / "c").mkdir(parents=True)
             tree = build_folder_tree(root, default_protected_patterns())
-            deepest = find_node(tree, root / "a" / "b" / "c")
+            flat = {entry["path"]: entry for entry in flatten_tree(tree)}
+            deepest = flat.get((root / "a" / "b" / "c").as_posix())
             self.assertIsNotNone(deepest)
-            self.assertEqual(deepest.depth, 3)
+            self.assertEqual(deepest["depth"], 3)
 
     def test_max_depth_limits_recursion(self):
         # VERIFIES THAT FOLDERS BEYOND max_depth ARE NOT INCLUDED IN THE TREE.
@@ -47,8 +46,8 @@ class BuildFolderTreeTests(unittest.TestCase):
             root = Path(temporary_directory)
             (root / "a" / "b" / "c" / "d").mkdir(parents=True)
             tree = build_folder_tree(root, default_protected_patterns(), max_depth=2)
-            deepest = find_node(tree, root / "a" / "b" / "c" / "d")
-            self.assertIsNone(deepest)
+            flat = {entry["path"]: entry for entry in flatten_tree(tree)}
+            self.assertIsNone(flat.get((root / "a" / "b" / "c" / "d").as_posix()))
 
     def test_file_counts_include_direct_files(self):
         # VERIFIES THAT FILE COUNTS ON A NODE REFLECT ITS DIRECT FILE CHILDREN.
@@ -86,9 +85,10 @@ class BuildFolderTreeTests(unittest.TestCase):
             root = Path(temporary_directory)
             (root / ".opencoeus").mkdir()
             tree = build_folder_tree(root, default_protected_patterns())
-            node = find_node(tree, root / ".opencoeus")
+            flat = {entry["path"]: entry for entry in flatten_tree(tree)}
+            node = flat.get((root / ".opencoeus").as_posix())
             self.assertIsNotNone(node)
-            self.assertTrue(node.is_protected)
+            self.assertTrue(node["is_protected"])
 
     def test_symlinks_are_excluded(self):
         # VERIFIES THAT SYMBOLIC LINKS TO DIRECTORIES ARE NOT INCLUDED IN THE TREE.
@@ -99,8 +99,8 @@ class BuildFolderTreeTests(unittest.TestCase):
             link_dir = root / "link"
             link_dir.symlink_to(real_dir)
             tree = build_folder_tree(root, default_protected_patterns())
-            link_node = find_node(tree, link_dir)
-            self.assertIsNone(link_node)
+            flat = {entry["path"]: entry for entry in flatten_tree(tree)}
+            self.assertIsNone(flat.get(link_dir.as_posix()))
 
     def test_progress_callback_is_invoked(self):
         # VERIFIES THAT THE PROGRESS CALLBACK IS CALLED FOR DISCOVERED SUBDIRECTORIES.
@@ -154,69 +154,6 @@ class FlattenTreeTests(unittest.TestCase):
             tree = build_folder_tree(root, default_protected_patterns())
             flat = flatten_tree(tree)
             self.assertEqual(flat[0]["path"], root.as_posix())
-
-
-class FindNodeTests(unittest.TestCase):
-    def test_finds_root_node(self):
-        # VERIFIES THAT find_node RETURNS THE ROOT WHEN SEARCHING FOR THE ROOT PATH.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            tree = build_folder_tree(root, default_protected_patterns())
-            found = find_node(tree, root)
-            self.assertIsNotNone(found)
-            self.assertEqual(found.path, root)
-
-    def test_finds_nested_node(self):
-        # VERIFIES THAT find_node CAN LOCATE A DEEPLY NESTED NODE BY PATH.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            (root / "a" / "b").mkdir(parents=True)
-            tree = build_folder_tree(root, default_protected_patterns())
-            found = find_node(tree, root / "a" / "b")
-            self.assertIsNotNone(found)
-            self.assertEqual(found.name, "b")
-
-    def test_returns_none_for_missing_path(self):
-        # VERIFIES THAT find_node RETURNS NONE WHEN THE TARGET PATH DOES NOT EXIST.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            tree = build_folder_tree(root, default_protected_patterns())
-            found = find_node(tree, root / "nonexistent")
-            self.assertIsNone(found)
-
-
-class SetFolderExclusionTests(unittest.TestCase):
-    def test_excludes_existing_folder(self):
-        # VERIFIES THAT SETTING excluded=True ON AN EXISTING FOLDER UPDATES ITS FLAGS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            (root / "target").mkdir()
-            tree = build_folder_tree(root, default_protected_patterns())
-            result = set_folder_exclusion(tree, root / "target", excluded=True)
-            self.assertTrue(result)
-            node = find_node(tree, root / "target")
-            self.assertTrue(node.excluded)
-            self.assertFalse(node.included)
-
-    def test_includes_previously_excluded_folder(self):
-        # VERIFIES THAT SETTING excluded=False RE INCLUDES A PREVIOUSLY EXCLUDED FOLDER.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            (root / "target").mkdir()
-            tree = build_folder_tree(root, default_protected_patterns())
-            set_folder_exclusion(tree, root / "target", excluded=True)
-            set_folder_exclusion(tree, root / "target", excluded=False)
-            node = find_node(tree, root / "target")
-            self.assertFalse(node.excluded)
-            self.assertTrue(node.included)
-
-    def test_returns_false_for_nonexistent_path(self):
-        # VERIFIES THAT SETTING EXCLUSION ON A NONEXISTENT PATH RETURNS FALSE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            tree = build_folder_tree(root, default_protected_patterns())
-            result = set_folder_exclusion(tree, root / "ghost", excluded=True)
-            self.assertFalse(result)
 
 
 if __name__ == "__main__":

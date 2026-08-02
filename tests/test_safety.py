@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from opencoeus.safety import is_protected
+from opencoeus.core.safety import is_protected
 
 
 class SafetyTests(unittest.TestCase):
@@ -100,7 +100,7 @@ class SafetyTests(unittest.TestCase):
 class CacheEvictionTests(unittest.TestCase):
     def test_cache_evicts_when_full(self):
         # VERIFIES THAT _COMPILED_CACHE CAPS AT MAX_CACHE_SIZE AND EVICTS OLDEST.
-        from opencoeus.safety import _compiled_cache, MAX_CACHE_SIZE
+        from opencoeus.core.safety import _compiled_cache, MAX_CACHE_SIZE
         _compiled_cache.clear()
         # FILL THE CACHE TO THE LIMIT USING IS_PROTECTED.
         for i in range(MAX_CACHE_SIZE):

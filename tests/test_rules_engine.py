@@ -1,8 +1,9 @@
 import unittest
+from pathlib import Path
 
 from opencoeus.engine import ManifestRow
 from opencoeus.profiles import ProfileConfig
-from opencoeus.rules_engine import RulesEngine, RuleMatch
+from opencoeus.rules import RulesEngine, RuleMatch
 
 
 def _make_row(path: str, size: int = 100, extension: str = ".txt",
@@ -386,7 +387,7 @@ class RegexPrecompileTests(unittest.TestCase):
 class DefaultRulesSingleSourceTests(unittest.TestCase):
     def test_default_rules_importable(self):
         # VERIFIES THAT DEFAULT_RULES CAN BE IMPORTED FROM RULES_ENGINE.
-        from opencoeus.rules_engine import DEFAULT_RULES
+        from opencoeus.rules import DEFAULT_RULES
         self.assertGreater(len(DEFAULT_RULES), 0)
         # EVERY RULE MUST HAVE REQUIRED KEYS.
         for rule in DEFAULT_RULES:
@@ -396,10 +397,9 @@ class DefaultRulesSingleSourceTests(unittest.TestCase):
             self.assertIn("destination_template", rule)
 
     def test_ui_imports_same_rules(self):
-        # VERIFIES THAT UI MODULE IMPORTS DEFAULT_RULES FROM RULES_ENGINE.
-        from opencoeus import rules_engine
-        self.assertTrue(hasattr(rules_engine, "DEFAULT_RULES"))
-        self.assertGreater(len(rules_engine.DEFAULT_RULES), 0)
+        # VERIFIES THAT UI MODULE IMPORTS DEFAULT_RULES FROM RULES.
+        from opencoeus.rules import DEFAULT_RULES
+        self.assertGreater(len(DEFAULT_RULES), 0)
 
 
 class TimezoneAwareDateTests(unittest.TestCase):
@@ -691,16 +691,165 @@ class GlobPatternTests(unittest.TestCase):
 class DefaultRenameRulesTests(unittest.TestCase):
     def test_default_rules_include_rename_actions(self):
         # VERIFIES THAT DEFAULT RULES INCLUDE RENAME AND MOVE AND RENAME ACTIONS.
-        from opencoeus.rules_engine import DEFAULT_RULES
+        from opencoeus.rules import DEFAULT_RULES
         rename_rules = [r for r in DEFAULT_RULES if r.get("action_type") in {"rename", "move+rename"}]
         self.assertGreaterEqual(len(rename_rules), 3)
 
     def test_rename_rules_have_rename_template(self):
         # VERIFIES THAT ALL RENAME RULES HAVE A NON EMPTY RENAME TEMPLATE.
-        from opencoeus.rules_engine import DEFAULT_RULES
+        from opencoeus.rules import DEFAULT_RULES
         for rule in DEFAULT_RULES:
             if rule.get("action_type") in {"rename", "move+rename"}:
                 self.assertTrue(rule.get("rename_template"), f"Rule '{rule['name']}' missing rename_template")
+
+
+class NlpEnhancedUnderBaseTests(unittest.TestCase):
+    def _make_engine(self):
+        profile = ProfileConfig()
+        profile.naming_strategy = "nlp_enhanced"
+        return RulesEngine(profile, scan_root="/")
+
+    def test_heuristic_destination_joined_under_rule_base(self):
+        # VERIFIES THAT THE HEURISTIC NLP DESTINATION IS NESTED UNDER THE RULE BASE
+        # FOR NON-DOCUMENT FILES.
+        engine = self._make_engine()
+        rule = _make_rule(rule_type="extension", rule_config={"extensions": [".csv"]},
+                          destination_template="/dest/{filename}", priority=1)
+        row = _make_row("/report.csv", extension=".csv")
+        row.nlp_confidence = 0.9
+        row.smart_filename = "2024-03-15_Acme_Report.csv"
+        row.smart_destination = "Report/Acme/2024"
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].action_type, "move+rename")
+        self.assertEqual(
+            matches[0].proposed_path,
+            "/dest/Report/Acme/2024/2024-03-15_Acme_Report.csv",
+        )
+
+    def test_heuristic_destination_strips_repeated_base_segment(self):
+        # VERIFIES THAT A HEURISTIC DESTINATION REPEATING THE BASE NAME IS NOT NESTED TWICE.
+        engine = self._make_engine()
+        rule = _make_rule(rule_type="extension", rule_config={"extensions": [".csv"]},
+                          destination_template="/dest/{filename}", priority=1)
+        row = _make_row("/report.csv", extension=".csv")
+        row.nlp_confidence = 0.9
+        row.smart_filename = "2024-03-15_Acme_Report.csv"
+        row.smart_destination = "dest/Acme/2024"
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(
+            matches[0].proposed_path,
+            "/dest/Acme/2024/2024-03-15_Acme_Report.csv",
+        )
+
+    def test_heuristic_no_change_keeps_rule_action(self):
+        # VERIFIES THAT IDENTICAL HEURISTIC RESULTS DO NOT REWRITE THE MATCH.
+        engine = self._make_engine()
+        rule = _make_rule(rule_type="extension", rule_config={"extensions": [".csv"]},
+                          destination_template="/dest/{filename}", priority=1)
+        row = _make_row("/report.csv", extension=".csv")
+        row.nlp_confidence = 0.9
+        row.smart_filename = "report.csv"
+        row.smart_destination = ""
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].action_type, "move")
+        self.assertEqual(matches[0].proposed_path, "/dest/report.csv")
+        self.assertNotIn("NLP-enhanced", matches[0].reason)
+
+    def test_low_confidence_rows_are_not_refined_heuristically(self):
+        # VERIFIES THAT THE HEURISTIC REFINEMENT STILL RESPECTS THE CONFIDENCE GATE.
+        engine = self._make_engine()
+        rule = _make_rule(rule_type="extension", rule_config={"extensions": [".csv"]},
+                          destination_template="/dest/{filename}", priority=1)
+        row = _make_row("/report.csv", extension=".csv")
+        row.nlp_confidence = 0.0
+        row.smart_filename = "2024-03-15_Acme_Report.csv"
+        row.smart_destination = "Report/Acme/2024"
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].proposed_path, "/dest/report.csv")
+        self.assertEqual(matches[0].action_type, "move")
+
+
+class DocumentBatchGroupingTests(unittest.TestCase):
+    def _make_engine(self):
+        profile = ProfileConfig()
+        profile.naming_strategy = "nlp_enhanced"
+        return RulesEngine(profile, scan_root="/")
+
+    def _doc(self, rel: str, doc_type: str, org: str, smart: str,
+             conf: float = 0.9) -> ManifestRow:
+        folder = "/" + rel.rsplit("/", 1)[0] if "/" in rel else "/"
+        return ManifestRow(
+            path="/" + rel, size=100, sha256="", status="unique",
+            relative_path=rel, extension=".pdf",
+            modified_at="2024-06-15T10:30:00",
+            folder_path=folder,
+            doc_type=doc_type, nlp_organization=org,
+            nlp_project="", nlp_topic=smart,
+            nlp_confidence=conf,
+            smart_filename=smart,
+            smart_destination=f"{doc_type}/{org}/2024",
+        )
+
+    def test_documents_share_one_batch_folder(self):
+        # VERIFIES THAT RELATED DOCUMENTS (SAME SOURCE FOLDER) ARE CO-LOCATED INTO
+        # ONE SHARED DESTINATION FOLDER REGARDLESS OF PER-FILE NLP DESTINATIONS.
+        engine = self._make_engine()
+        rule = _make_rule(rule_type="extension", rule_config={"extensions": [".pdf"]},
+                          destination_template="/dest/{filename}", priority=1)
+        rows = [
+            self._doc("E2 LIFEBOAT AND RESCUE BOAT/E2-1.pdf", "Specification", "DECK", "e2-1.pdf"),
+            self._doc("E2 LIFEBOAT AND RESCUE BOAT/E2-2.pdf", "Specification", "VESSEL", "e2-2.pdf"),
+            self._doc("E2 LIFEBOAT AND RESCUE BOAT/E2-3.pdf", "Specification", "OTHER", "e2-3.pdf"),
+        ]
+        matches = engine.evaluate(rows, [rule])
+        self.assertEqual(len(matches), 3)
+        parents = {Path(m.proposed_path).parent.as_posix() for m in matches}
+        self.assertEqual(len(parents), 1)
+        self.assertEqual(parents.pop(), "/dest/specification/e2-lifeboat-and-rescue-boat")
+        for m in matches:
+            self.assertNotIn("2024", Path(m.proposed_path).name)
+            self.assertNotIn("/2024/", m.proposed_path)
+            self.assertEqual(m.action_type, "move+rename")
+
+    def test_root_documents_fall_back_to_content_clustering(self):
+        # VERIFIES THAT DOCUMENTS AT THE SCAN ROOT ARE GROUPED BY CONTENT
+        # (DOMINANT DOC TYPE + ENTITY) INSTEAD OF A SOURCE FOLDER.
+        engine = self._make_engine()
+        rule = _make_rule(rule_type="extension", rule_config={"extensions": [".pdf"]},
+                          destination_template="/dest/{filename}", priority=1)
+        rows = [
+            self._doc("a.pdf", "Report", "NORCONTROL", "a.pdf"),
+            self._doc("b.pdf", "Report", "NORCONTROL", "b.pdf"),
+        ]
+        matches = engine.evaluate(rows, [rule])
+        self.assertEqual(len(matches), 2)
+        parents = {Path(m.proposed_path).parent.as_posix() for m in matches}
+        self.assertEqual(len(parents), 1)
+        self.assertEqual(parents.pop(), "/dest/report/norcontrol")
+
+    def test_date_stripped_rule_templates(self):
+        # VERIFIES THAT RULE TEMPLATES NO LONGER PRODUCE DATED FILENAMES.
+        engine = RulesEngine(ProfileConfig(), scan_root="/")
+        rule = _make_rule(
+            rule_type="extension", rule_config={"extensions": [".pdf"]},
+            destination_template="/dest/{doc_type}_{title_sanitized}.{extension}",
+            priority=1, action_type="move+rename",
+            rename_template="{doc_type}_{title_sanitized}.{extension}",
+        )
+        row = _make_row("/spec.pdf", extension=".pdf", date_iso="2024-06-15")
+        row.doc_type = "Specification"
+        row.suggested_title = "Hydraulic Crane"
+        matches = engine.evaluate([row], [rule])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(
+            Path(matches[0].proposed_path).name,
+            "Specification_Hydraulic Crane.pdf",
+        )
+        self.assertNotIn("2024", Path(matches[0].proposed_path).name)
 
 
 if __name__ == "__main__":

@@ -3,11 +3,11 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 
-from opencoeus.database import AuditStore
+from opencoeus.db import AuditStore
 from opencoeus.executor import (
-    ExecutionResult,
     cleanup_empty_folders,
     cleanup_holding_area,
+    cleanup_stale_holding_folders,
     create_holding_area,
     execute_batch,
     get_holding_dir,
@@ -20,7 +20,7 @@ from opencoeus.executor import (
     undo_batch,
     verify_file_integrity,
 )
-from opencoeus.hashing import sha256_file
+from opencoeus.core.hashing import sha256_file
 
 
 class ResolveCollisionTests(unittest.TestCase):
@@ -156,6 +156,23 @@ class HoldingAreaTests(unittest.TestCase):
             finally:
                 executor_mod.HOLDING_ROOT = original
 
+    def test_cleanup_stale_holding_folders(self):
+        # VERIFIES THAT EMPTY ORPHAN HOLDING DIRS ARE REMOVED BUT NON-EMPTY ONES REMAIN.
+        with tempfile.TemporaryDirectory() as tmp:
+            import opencoeus.executor as executor_mod
+            original = executor_mod.HOLDING_ROOT
+            executor_mod.HOLDING_ROOT = Path(tmp) / "transactions"
+            try:
+                (executor_mod.HOLDING_ROOT / "orphan").mkdir(parents=True)
+                holding = create_holding_area(500)
+                (holding / "keep.txt").write_text("x")
+                removed = cleanup_stale_holding_folders()
+                self.assertEqual(removed, 1)
+                self.assertFalse((executor_mod.HOLDING_ROOT / "orphan").exists())
+                self.assertTrue(holding.exists())
+            finally:
+                executor_mod.HOLDING_ROOT = original
+
 
 class PreExecutionCheckTests(unittest.TestCase):
     def _make_store(self):
@@ -173,7 +190,7 @@ class PreExecutionCheckTests(unittest.TestCase):
             f2 = Path(tmp) / "b.txt"
             f1.write_text("aaa")
             f2.write_text("bbb")
-            from opencoeus.models import TransactionEntry
+            from opencoeus.db import TransactionEntry
             entries = [
                 TransactionEntry(
                     batch_id=1, action_type="move",
@@ -195,7 +212,7 @@ class PreExecutionCheckTests(unittest.TestCase):
     def test_missing_file_detected(self):
         # VERIFIES THAT AN ERROR IS RETURNED FOR MISSING SOURCE FILES.
         store = self._make_store()
-        from opencoeus.models import TransactionEntry
+        from opencoeus.db import TransactionEntry
         entries = [
             TransactionEntry(
                 batch_id=1, action_type="move",
@@ -215,7 +232,7 @@ class PreExecutionCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "changed.txt"
             f.write_text("original")
-            from opencoeus.models import TransactionEntry
+            from opencoeus.db import TransactionEntry
             entries = [
                 TransactionEntry(
                     batch_id=1, action_type="move",
@@ -243,7 +260,7 @@ class RollbackTests(unittest.TestCase):
                 holding = create_holding_area(200)
                 moved = safe_move(src, holding / "source.txt")
                 self.assertFalse(src.exists())
-                from opencoeus.models import TransactionEntry
+                from opencoeus.db import TransactionEntry
                 entry = TransactionEntry(
                     batch_id=200, action_type="move",
                     source_path=str(src), destination_path="/dest/source.txt",
@@ -269,7 +286,7 @@ class RollbackTests(unittest.TestCase):
                 holding = create_holding_area(300)
                 moved1 = safe_move(src1, holding / "file1.txt")
                 moved2 = safe_move(src2, holding / "file2.txt")
-                from opencoeus.models import TransactionEntry
+                from opencoeus.db import TransactionEntry
                 e1 = TransactionEntry(
                     batch_id=300, action_type="move",
                     source_path=str(src1), destination_path="/dest/file1.txt",
@@ -594,7 +611,7 @@ class RecoverCrashedBatchesTests(unittest.TestCase):
         recovered = recover_crashed_batches(store)
         self.assertEqual(recovered, 1)
         # VERIFY STATUS WAS UPDATED.
-        from opencoeus.models import TransactionBatch, TransactionEntry
+        from opencoeus.db import TransactionBatch, TransactionEntry
         from sqlalchemy import select
         with store.session_factory() as session:
             batch_obj = session.scalar(select(TransactionBatch).where(TransactionBatch.id == batch.id))
@@ -615,7 +632,7 @@ class RecoverCrashedBatchesTests(unittest.TestCase):
 class BatchStatusEnumTests(unittest.TestCase):
     def test_batch_status_values(self):
         # VERIFIES BATCHSTATUS ENUM HAS CORRECT STRING VALUES.
-        from opencoeus.models import BatchStatus
+        from opencoeus.db import BatchStatus
         self.assertEqual(BatchStatus.PENDING, "PENDING")
         self.assertEqual(BatchStatus.EXECUTING, "EXECUTING")
         self.assertEqual(BatchStatus.COMPLETED, "COMPLETED")
@@ -624,7 +641,7 @@ class BatchStatusEnumTests(unittest.TestCase):
 
     def test_entry_status_values(self):
         # VERIFIES ENTRYSTATUS ENUM HAS CORRECT STRING VALUES.
-        from opencoeus.models import EntryStatus
+        from opencoeus.db import EntryStatus
         self.assertEqual(EntryStatus.PENDING, "PENDING")
         self.assertEqual(EntryStatus.MOVED_TO_HOLDING, "MOVED_TO_HOLDING")
         self.assertEqual(EntryStatus.COMPLETED, "COMPLETED")
@@ -681,7 +698,7 @@ class EndToEndExecuteUndoRoundTripTests(unittest.TestCase):
                     self.assertEqual(files[name].read_text(), f"content of {name}")
                     self.assertFalse((dest_dir / name).exists(), f"{name} should NOT remain in dest")
                 # VERIFY DB STATE.
-                from opencoeus.models import EntryStatus, BatchStatus
+                from opencoeus.db import EntryStatus, BatchStatus
                 entries = store.get_entries_by_batch(batch.id)
                 for entry in entries:
                     self.assertEqual(entry.status, EntryStatus.UNDONE)
@@ -753,14 +770,15 @@ class PartialRollbackMidBatchTests(unittest.TestCase):
                         source_hash=sha256_file(src), source_size=src.stat().st_size,
                     )
                 # PATCH safe_move TO FAIL ONLY WHEN MOVING TO dest_dir/fail.txt.
-                _original_safe_move = executor_mod.safe_move
+                from opencoeus.executor import engine as engine_mod
+                _original_safe_move = engine_mod.safe_move
 
                 def patched_safe_move(src_path, dst_path):
                     if dst_path.parent == dest_dir and dst_path.name == "fail.txt":
                         raise OSError("Simulated write failure")
                     return _original_safe_move(src_path, dst_path)
 
-                with patch.object(executor_mod, "safe_move", side_effect=patched_safe_move):
+                with patch.object(engine_mod, "safe_move", side_effect=patched_safe_move):
                     result = execute_batch(batch.id, store)
                 # PARTIAL: AT LEAST ONE FAILED.
                 self.assertGreater(result.failed, 0)
@@ -919,7 +937,7 @@ class FullDBStateVerificationTests(unittest.TestCase):
                 self.assertEqual(result.skipped, 0)
                 self.assertEqual(result.batch_id, batch.id)
                 # VERIFY BATCH STATUS.
-                from opencoeus.models import BatchStatus, EntryStatus
+                from opencoeus.db import BatchStatus, EntryStatus
                 batch_obj = store.get_batch(batch.id)
                 self.assertEqual(batch_obj.status, BatchStatus.COMPLETED)
                 self.assertIsNotNone(batch_obj.completed_at)
@@ -963,7 +981,7 @@ class FullDBStateVerificationTests(unittest.TestCase):
                     source_hash="", source_size=0,
                 )
                 from opencoeus.journal import run_execution
-                from opencoeus.models import BatchStatus
+                from opencoeus.db import BatchStatus
                 result = run_execution(batch.id, store)
                 self.assertEqual(result.completed, 1)
                 self.assertEqual(result.failed, 1)
@@ -1001,7 +1019,7 @@ class CrashRecoveryRestoreTests(unittest.TestCase):
                 profile_id = self._make_profile(store)
                 src = Path(tmp) / "original.txt"
                 src.write_text("important data")
-                from opencoeus.models import BatchStatus, EntryStatus
+                from opencoeus.db import BatchStatus, EntryStatus
                 batch = store.create_batch(profile_id, "crash test")
                 entry = store.add_entry(
                     batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
@@ -1037,7 +1055,7 @@ class CrashRecoveryRestoreTests(unittest.TestCase):
                 store = self._make_store()
                 profile_id = self._make_profile(store)
                 src = Path(tmp) / "gone.txt"
-                from opencoeus.models import BatchStatus, EntryStatus
+                from opencoeus.db import BatchStatus, EntryStatus
                 batch = store.create_batch(profile_id, "missing holding test")
                 entry = store.add_entry(
                     batch.id, None, "move", str(src), str(Path(tmp) / "dest.txt"),
@@ -1085,7 +1103,7 @@ class RollbackErrorReturnTests(unittest.TestCase):
                 )
                 holding_dir = executor_mod.create_holding_area(batch.id)
                 held = executor_mod.safe_move(src, holding_dir / src.name)
-                from opencoeus.models import EntryStatus
+                from opencoeus.db import EntryStatus
                 store.update_entry(entry.id, status=EntryStatus.MOVED_TO_HOLDING, holding_path=str(held))
                 errors = executor_mod.rollback_partial([(entry, held)], store)
                 self.assertEqual(errors, [])

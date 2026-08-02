@@ -1,25 +1,13 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 
-from .database import AuditStore
+from .db import AuditStore, BatchStatus, EntryStatus, TransactionBatch, TransactionEntry
 from .executor import execute_batch, undo_batch, ExecutionResult
-from .hashing import sha256_file
-from .models import BatchStatus, EntryStatus
+from .core.hashing import sha256_file
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class BatchSummary:
-    batch_id: int
-    total: int
-    completed: int
-    failed: int
-    pending: int
-    status: str
 
 
 # PREPARE EXECUTION
@@ -28,8 +16,6 @@ class BatchSummary:
 def prepare_execution(store: AuditStore, profile_id: int, description: str = "") -> tuple[int, int]:
     """Create batch and entries from approved proposed action rows.
     Returns (batch_id, entry_count). Uses a single session to avoid N+1 opens."""
-    from .hashing import sha256_file
-    from .models import EntryStatus, TransactionBatch, TransactionEntry
     actions = store.get_proposed_actions(profile_id)
     approved = [a for a in actions if a.approved]
     logger.info("Preparing execution: profile %d, %d approved actions", profile_id, len(approved))
@@ -79,35 +65,6 @@ def prepare_execution(store: AuditStore, profile_id: int, description: str = "")
             session.add(entry)
         session.commit()
     return (batch.id, len(approved))
-
-
-# BATCH SUMMARY
-
-
-def get_batch_summary(store: AuditStore, batch_id: int) -> BatchSummary:
-    """Return counts by status for a batch using SQL GROUP BY (no N+1)."""
-    from sqlalchemy import func, select
-    from .models import TransactionEntry
-    with store.session_factory() as session:
-        rows = session.execute(
-            select(TransactionEntry.status, func.count(TransactionEntry.id))
-            .where(TransactionEntry.batch_id == batch_id)
-            .group_by(TransactionEntry.status)
-        ).all()
-        status_counts = {status: count for status, count in rows}
-    total = sum(status_counts.values())
-    completed = status_counts.get(EntryStatus.COMPLETED, 0)
-    failed = status_counts.get(EntryStatus.FAILED, 0)
-    pending = status_counts.get(EntryStatus.PENDING, 0) + status_counts.get(EntryStatus.MOVED_TO_HOLDING, 0)
-    status = "completed" if completed == total else "failed" if failed > 0 else "in_progress"
-    return BatchSummary(
-        batch_id=batch_id,
-        total=total,
-        completed=completed,
-        failed=failed,
-        pending=pending,
-        status=status,
-    )
 
 
 # EXECUTE ORCHESTRATION

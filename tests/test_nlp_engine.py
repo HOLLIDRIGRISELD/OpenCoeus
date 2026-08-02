@@ -1,8 +1,8 @@
 import unittest
 from pathlib import Path
 
-from opencoeus.content_extractor import FileSignals
-from opencoeus.nlp_engine import NLPEngine, NLPResult
+from opencoeus.extractors import FileSignals
+from opencoeus.nlp import NLPEngine, NLPResult
 
 
 class NLPEngineTests(unittest.TestCase):
@@ -22,8 +22,8 @@ class NLPEngineTests(unittest.TestCase):
         result = self.engine.analyze(Path("/test/report.pdf"), signals, stem="report")
         self.assertIsInstance(result, NLPResult)
         self.assertGreaterEqual(result.confidence, 0.6)
-        self.assertIn(result.author, ["John_Smith", "John", "Smith"])
-        self.assertIn(result.organization, ["Acme_Corporation", "Acme"])
+        self.assertIn(result.author, ["John Smith", "John", "Smith"])
+        self.assertIn(result.organization, ["Acme Corporation", "Acme"])
 
     def test_analyze_image_with_metadata(self):
         signals = FileSignals(
@@ -143,6 +143,60 @@ class NLPEngineTests(unittest.TestCase):
             signals_present=["text"],
         )
         result = self.engine.analyze(Path("/test/short.txt"), signals, stem="short")
+        self.assertFalse(result.nlp_generated)
+
+    def test_generate_filename_uses_server_style(self):
+        result = NLPResult(
+            topic="Q3 Revenue",
+            author="John Smith",
+            organization="Acme Corp",
+            date="2024-03-15",
+            document_type="Invoice",
+        )
+        name = self.engine._generate_filename(result, "scan001", ".pdf")
+        self.assertEqual(name, "invoice_q3-revenue_john-smith.pdf")
+        self.assertNotIn(" ", name)
+        self.assertNotIn("2024", name)
+        self.assertEqual(name, name.lower())
+
+    def test_generate_filename_caps_length(self):
+        result = NLPResult(
+            topic="A very long topic that would otherwise create an extremely long filename",
+            author="Jane Doe",
+            organization="Some Very Long Organization Name",
+            date="2024-03-15",
+            document_type="Report",
+        )
+        name = self.engine._generate_filename(result, "scan001", ".pdf")
+        self.assertLessEqual(len(name), 64)
+        self.assertTrue(name.endswith(".pdf"))
+
+    def test_generate_filename_keeps_stem_without_signals(self):
+        # VERIFIES THAT NO RELIABLE NLP SIGNALS NEVER PRODUCE GARBAGE NAMES
+        # FROM FREQUENT TOKENS OR SUMMARY FRAGMENTS (e.g. MANUAL CODES).
+        result = NLPResult(
+            document_type="Document",
+            keywords=["stan", "rev", "c224e"],
+            summary="stan rev stamped drawing",
+            date="",
+            topic="",
+            author="",
+            organization="",
+            project="",
+        )
+        name = self.engine._generate_filename(result, "D7 EMBARKATION LADDER", ".pdf")
+        self.assertEqual(name, "D7 EMBARKATION LADDER.pdf")
+
+    def test_analyze_is_heuristic_only(self):
+        engine = NLPEngine()
+        signals = FileSignals(
+            text="Quarterly Report Summary",
+            file_type="document",
+            extension=".pdf",
+            confidence_hint=0.6,
+            signals_present=["text"],
+        )
+        result = engine.analyze(Path("/test/q.pdf"), signals, stem="q")
         self.assertFalse(result.nlp_generated)
 
 

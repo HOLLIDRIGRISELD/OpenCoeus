@@ -2,7 +2,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from opencoeus.content_extractor import extract_all, _get_category, FileSignals
+from opencoeus.extractors import extract_all, _get_category, FileSignals
 
 
 class GetCategoryTests(unittest.TestCase):

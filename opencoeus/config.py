@@ -9,15 +9,20 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+# FOLDER-NAME PATTERNS (SINGLE SOURCE OF TRUTH)
+# Shared between protected-path rules (safety.py) and folder classification
+# (folder_classifier.py) so the two lists cannot drift apart.
+VERSION_CONTROL_PATTERNS = [r"^\.git$"]
+VIRTUAL_ENVIRONMENT_PATTERNS = [r"^\.?venv$", r"^env$"]
+DEPENDENCY_PATTERNS = [r"^node_modules$"]
+CACHE_PATTERNS = [r"^__pycache__$", r"^\.pytest_cache$", r"^\.mypy_cache$"]
+
 COMMON_PROTECTED_PATTERNS = [
     r"^\.opencoeus$",
-    r"^\.git$",
-    r"^node_modules$",
-    r"^\.?venv$",
-    r"^env$",
-    r"^__pycache__$",
-    r"^\.pytest_cache$",
-    r"^\.mypy_cache$",
+    *VERSION_CONTROL_PATTERNS,
+    *VIRTUAL_ENVIRONMENT_PATTERNS,
+    *DEPENDENCY_PATTERNS,
+    *CACHE_PATTERNS,
 ]
 
 PLATFORM_PROTECTED_PATTERNS = {
@@ -57,7 +62,10 @@ def default_application_data_directory(operating_system_name: str | None = None)
     return linux_state_directory / "OpenCoeus"
 
 
-def database_url() -> str:
+def get_data_directory() -> Path:
+    """Return the per-user data directory, creating it if needed.
+    Honors the OPENCOEUS_DATA_DIR override and falls back to a local
+    .opencoeus folder when the normal location is not writable."""
     configured_data_directory = os.getenv("OPENCOEUS_DATA_DIR")
     application_data_directory = Path(configured_data_directory) if configured_data_directory else default_application_data_directory()
     logger.debug("Using data directory: %s", application_data_directory)
@@ -68,4 +76,8 @@ def database_url() -> str:
         logger.warning("Falling back to local .opencoeus directory")
         application_data_directory = Path.cwd() / ".opencoeus"
         application_data_directory.mkdir(parents=True, exist_ok=True)
-    return f"sqlite:///{(application_data_directory / 'opencoeus.sqlite3').as_posix()}"
+    return application_data_directory
+
+
+def database_url() -> str:
+    return f"sqlite:///{(get_data_directory() / 'opencoeus.sqlite3').as_posix()}"

@@ -7,9 +7,9 @@ OpenCoeus is a highly specialized, locally hosted Data Lifecycle Management (DLM
 ### Core capabilities
 
 - **Cryptographic Deduplication**: Scans entire server directories at the byte level using SHA-256 hashing to identify and eliminate exact file duplicates across folders, drastically reducing unnecessary storage bloat.
-- **Intelligent Document Parsing**: Uses local text extraction tools to open and read the contents of PDF and Word documents without any external internet connection or cloud APIs.
-- **AI-Powered Renaming**: Uses local Natural Language Processing (NLP) to analyze extracted text, understand document context, and automatically generate and apply standardized, highly accurate filenames.
-- **Persistent Memory and Safeguards**: Relies on a local SQLite database to log every generated title and summary, ensuring the system never assigns identical names to different files. Uses strict regex Safe Zones to bypass chronological or reporting folders, preserving vital directory structures.
+- **Intelligent Document Parsing**: Uses local text extraction tools to open and read the contents of PDF, Word, TXT, and Markdown documents without any external internet connection or cloud APIs.
+- **AI-Powered Renaming**: Uses local Natural Language Processing (NLP) to analyze extracted text, understand document context, and automatically generate standardized, highly accurate filenames. An optional local LLM refines suggested names in batches.
+- **Persistent Memory and Safeguards**: Relies on a local SQLite database to log every generated title and summary, ensuring the system never assigns identical names to different files. Uses strict safe zones to bypass chronological or reporting folders, preserving vital directory structures.
 - **Spreadsheet Consolidation**: Dives into complex, macro-enabled spreadsheets to extract embedded tables or metadata, converting and merging them into lightweight master sheets for rapid, global searching.
 
 ## Technology stack
@@ -19,10 +19,10 @@ OpenCoeus is a highly specialized, locally hosted Data Lifecycle Management (DLM
 | Desktop interface | PyQt6 | Native cross-platform window, background scan thread, progress, and audit log. |
 | Core engine | Python 3.11+ | Safe traversal, policy checks, hashing, manifests, and action orchestration. |
 | Exact duplicates | `hashlib` SHA-256 | Byte-level duplicate detection after size-based filtering. |
-| Documents | `pypdf`, `python-docx` | Offline PDF and DOCX text extraction. |
-| NLP and renaming | `spaCy` | Local title extraction, keyword scoring, document classification, and context-aware filename generation. |
-| Local analysis | `scikit-learn` | Document type classification and naming convention detection. |
-| Spreadsheets | `pandas`, `openpyxl` | Read-only analysis and explicitly approved consolidation of spreadsheet data. |
+| Documents | `pypdf`, `python-docx`, `Pillow`, `mutagen` | Offline PDF, DOCX, image, and audio metadata extraction. |
+| NLP and renaming | `spaCy` | Local title extraction, entity detection, keyword scoring, document classification, and context-aware filename generation. |
+| Local LLM | `llama-cpp-python` (phi3 / Qwen2.5 GGUF) | Optional offline refinement of suggested filenames in batches. |
+| Spreadsheets | `openpyxl` | Read-only analysis and explicitly approved consolidation of spreadsheet data. |
 | Local memory | SQLite and SQLAlchemy | Audit history, title history, proposed actions, and transaction journal. |
 | Distribution | PyInstaller | Per-platform desktop packages built on Windows, macOS, or Linux. |
 
@@ -33,8 +33,9 @@ OpenCoeus is a highly specialized, locally hosted Data Lifecycle Management (DLM
 - Folder scans present a selectable folder tree with recommended exclusions.
 - Application, game, dependency, and source-code folders are excluded by default when recognised.
 - Organisation retains each selected folder's structure unless the user explicitly approves a destination rule.
+- Server, code, config, installer, and system files are never renamed (bypass list).
 - Every file change requires a preview, explicit approval, persistent audit record, and undo journal.
-- Safe Zones use strict regex patterns to bypass chronological, reporting, and system folders, preserving vital directory structures.
+- Safe zones use strict regex patterns to bypass chronological, reporting, and system folders, preserving vital directory structures.
 
 ## Delivery roadmap
 
@@ -54,15 +55,15 @@ OpenCoeus is a highly specialized, locally hosted Data Lifecycle Management (DLM
 - [x] Automatic folder classification into 7 categories (system, virtual environment, package dependencies, version control, game library, application, source code) with user override support.
 - [x] Reusable scan profiles storing root path, included/excluded folders, custom protected patterns, and document extraction settings.
 - [x] Deterministic rules engine with extension, pattern, date, size, folder, status, and always rule types; priority-based first-match-wins evaluation.
-- [x] Results interface with filters for duplicate groups, protected files, document title suggestions, unique files, unreadable files, and a search-by-name feature.
+- [x] Results interface with filters, duplicate groups, protected files, document title suggestions, unique files, unreadable files, and a search-by-name feature.
 - [x] Action approval workflow with approve selected, approve all, reject, and database persistence.
 - [x] Rules management UI with add, edit, enable/disable, and delete controls.
 - [x] Two-phase scan workflow: Phase 1 classifies folders, Phase 2 scans files with exclusions.
-- [x] 11 default organisation rules (Documents, Photos, Music, Video, Compressed, Code, Installers, Old files archive, Duplicate consolidation, Uncategorized, Spreadsheets).
+- [x] 18 default organisation rules (documents, photos, music, video, compressed, code, installers, spreadsheets, duplicates, uncategorized, and rename rules).
 - [x] Error display section for scan warnings and unreadable files.
 - [x] Async CSV manifest export via background thread.
-- [x] Modern dark theme with sidebar-based navigation (6 pages).
-- [x] CLI subcommands: scan, profile, classify, organise.
+- [x] Modern dark theme with sidebar-based navigation (7 pages).
+- [x] CLI subcommands: scan, profile, classify, organize.
 - [x] Performance: throttled progress, batch DB recording, compiled regex, sorted table updates, pre-parsed rule configs, bulk classification save, log buffer with QTimer, log capped at 5000 lines.
 - [x] 188 automated tests across 13 test files.
 
@@ -86,34 +87,44 @@ OpenCoeus is a highly specialized, locally hosted Data Lifecycle Management (DLM
 
 ### Stage 4 - smart renaming (implemented)
 
-- [x] Add {title}, {title_sanitized}, {date}, {date_month} template variables to rules engine.
-- [x] Add "rename" action type alongside existing "move" action.
-- [x] Create safe_rename() function in executor for same-directory renames.
+- [x] Add `{title}`, `{title_sanitized}`, `{date}`, `{date_month}` template variables to rules engine.
+- [x] Add "rename" and "move+rename" action types alongside existing "move".
+- [x] Create safe rename function in the executor for same-directory renames.
 - [x] Build smart filename constructor: title + metadata into clean filesystem name.
 - [x] Handle rename collisions, length limits, and special character sanitisation.
-- [x] Add proposed rename preview column to results table.
+- [x] Add proposed rename preview to the results table.
 - [x] Add "Has suggested title" filter to results page.
 - [x] Add approve/reject workflow for renames in actions page.
-- [x] Add default "Smart rename documents" rule (PDF/DOCX to suggested title).
-- [x] Add default "Photos by date" rule (rename photos to YYYY-MM-DD - name).
+- [x] Add default smart-rename rules for documents, spreadsheets, screenshots, and filename normalisation.
 - [x] Extend transaction journal to support rename entries with rollback.
 - [x] CLI subcommand: rename (--dry-run).
 - [x] Tests: rename collision resolution, title extraction, template rendering, undo round-trip.
 
-### Stage 5 - AI-powered renaming with NLP (not started)
+### Stage 5 - AI-powered renaming with NLP (implemented)
 
-- [ ] Add spaCy as runtime dependency for local NLP processing.
-- [ ] Build NLP title extractor: keyword extraction, sentence importance scoring.
-- [ ] Build document classifier: detect document type (invoice, report, contract, letter, manual, etc.).
-- [ ] Build smart title generator: combine document type + keywords + metadata into standardised filename.
-- [ ] Create NamingStrategy interface with two implementations: RuleBasedStrategy (Stage 4) and NLPStrategy (Stage 5).
-- [ ] Add naming strategy selector to profile settings (rule-based vs NLP vs hybrid).
-- [ ] Add NLP confidence score to each suggested title for user review.
+- [x] Add spaCy as a runtime dependency for local NLP processing.
+- [x] Build NLP title extractor: keyword extraction, sentence importance scoring, and entity detection (people, organisations, projects, locations, dates).
+- [x] Build document classifier: 26 document types (invoice, report, contract, letter, manual, specification, budget, etc.).
+- [x] Build smart title generator: document type + keywords + metadata into a standardized filename.
+- [x] Add naming strategy selector to profile settings (`nlp_enhanced` vs `rule_based`).
+- [x] Add NLP confidence score to each suggested title for user review.
+- [x] Content-based batch grouping: related documents co-located into one shared content folder per batch (no per-file deep folders).
+- [x] Date-free filenames: generated names never include dates; year subfolders are still used for non-batch destinations (e.g. `Photos/2024/`).
+- [x] Optional local LLM refinement (llama.cpp, phi3 / Qwen2.5 GGUF) during the organize pass.
+- [x] Fallback chain: NLP to rule-based to original filename.
+- [x] Tests: NLP extraction accuracy, classifier precision, confidence scoring, batch grouping, fallback behaviour, locked-refinement handling.
+- [ ] Learn naming conventions from existing files in target folder (pattern detection).
 - [ ] Add "AI Suggested" column to results table with confidence indicator.
 - [ ] Batch rename mode: apply NLP titles to all matching documents with one-click approval.
-- [ ] Learn naming conventions from existing files in target folder (pattern detection).
-- [ ] Fallback chain: NLP fails to rule-based to original filename.
-- [ ] Tests: NLP extraction accuracy, classifier precision, naming convention detection, fallback behaviour.
+
+#### Maintenance & refactor (post-Stage 5)
+
+- [x] Consolidated the low-level scanning modules into a `core/` package (`file_scan`, `folder_tree`, `folder_classifier`, `hashing`, `safety`), resolving a duplicate `scanner.py` naming clash.
+- [x] Made folder-name patterns single-sourced in `config.py` (shared constants used by both the safety rules and the folder classifier).
+- [x] Extracted `get_data_directory()` shared by the database path and UI settings, and added persisted `settings.json` (theme + behavior toggles).
+- [x] Optimised the folder-tree build to a single-pass `os.scandir` traversal with cached stats.
+- [x] Removed dead code and redundant imports (folder-tree lookup helpers, batch summary, unreachable profile-update branch).
+- [x] 415 automated tests across 21 test files.
 
 ### Stage 6 - spreadsheet consolidation (not started)
 

@@ -201,7 +201,6 @@ def _create_documents(folder: Path) -> None:
 
 # PDF WITH EXTRACTABLE TEXT IN PAGE CONTENT STREAM
     try:
-        from pypdf import PdfReader
         pdf_bytes = _make_pdf_with_text([
             "Invoice #INV-2024-0315",
             "Date: March 15, 2024",

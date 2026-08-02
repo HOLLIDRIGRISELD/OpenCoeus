@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from opencoeus.model_download import (
+from opencoeus.llm import (
     MODELS_DIR,
     BIN_DIR,
     PHI3_GGUF_FILENAME,

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from .database import AuditStore
-from .models import ScanProfile
+from .db import AuditStore, ScanProfile
 
 
 @dataclass
@@ -79,12 +77,7 @@ def list_profiles(store: AuditStore) -> list[ProfileConfig]:
 
 
 def update_profile(store: AuditStore, profile_id: int, **kwargs) -> ProfileConfig | None:
-    """Update a scan profile and return the updated profile config, or none if not found.
-    Converts profile config list fields to plain lists for the database layer."""
-    serializable_keys = {"included_folders", "excluded_folders", "custom_protected_patterns"}
-    for key in serializable_keys:
-        if key in kwargs and isinstance(kwargs[key], ProfileConfig):
-            kwargs[key] = getattr(kwargs[key], key, [])
+    """Update a scan profile and return the updated profile config, or none if not found."""
     db_profile = store.update_profile(profile_id, **kwargs)
     if db_profile is None:
         return None

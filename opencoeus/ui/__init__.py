@@ -1,4 +1,4 @@
 """OpenCoeus GUI package."""
-from .app import main
+from .app import run_ui
 
-__all__ = ["main"]
+__all__ = ["run_ui"]

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from opencoeus.config import ScanSettings
-from opencoeus.database import AuditStore
+from opencoeus.db import AuditStore
 from opencoeus.engine import ScanEngine
 
 

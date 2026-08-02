@@ -1,6 +1,6 @@
 import unittest
 
-from opencoeus.documents import suggest_title, extract_metadata, detect_document_type
+from opencoeus.extractors import suggest_title, detect_document_type
 
 
 class DetectDocumentTypeTests(unittest.TestCase):

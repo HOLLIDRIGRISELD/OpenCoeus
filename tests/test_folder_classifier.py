@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opencoeus.folder_tree import FolderNode, build_folder_tree
-from opencoeus.folder_classifier import classify_folder, classify_tree
+from opencoeus.core.folder_tree import FolderNode, build_folder_tree
+from opencoeus.core.folder_classifier import classify_folder, classify_tree
 from opencoeus.config import default_protected_patterns
 
 

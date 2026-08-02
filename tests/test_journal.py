@@ -2,11 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opencoeus.database import AuditStore
-from opencoeus.hashing import sha256_file
+from opencoeus.db import AuditStore
+from opencoeus.core.hashing import sha256_file
 from opencoeus.journal import (
-    BatchSummary,
-    get_batch_summary,
     prepare_execution,
     run_execution,
     undo_last_batch,
@@ -52,42 +50,6 @@ class PrepareExecutionTests(unittest.TestCase):
             batch_id, count = prepare_execution(store, profile.id, "")
             self.assertEqual(batch_id, 0)
             self.assertEqual(count, 0)
-            store.close()
-
-
-class GetBatchSummaryTests(unittest.TestCase):
-    def test_summary_counts(self):
-        # VERIFIES THAT THE SUMMARY CORRECTLY COUNTS ENTRIES BY STATUS.
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{db_path.as_posix()}")
-            profile = store.create_profile("Summary Test")
-            batch = store.create_batch(profile.id)
-            e1 = store.add_entry(batch.id, None, "move", "/a.txt", "/new_a.txt")
-            e2 = store.add_entry(batch.id, None, "move", "/b.txt", "/new_b.txt")
-            store.add_entry(batch.id, None, "move", "/c.txt", "/new_c.txt")
-            store.update_entry(e1.id, status="COMPLETED")
-            store.update_entry(e2.id, status="COMPLETED")
-            summary = get_batch_summary(store, batch.id)
-            self.assertEqual(summary.total, 3)
-            self.assertEqual(summary.completed, 2)
-            self.assertEqual(summary.failed, 0)
-            self.assertEqual(summary.pending, 1)
-            store.close()
-
-    def test_summary_all_completed(self):
-        # VERIFIES THAT STATUS IS COMPLETED WHEN ALL ENTRIES ARE COMPLETED.
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{db_path.as_posix()}")
-            profile = store.create_profile("All Done")
-            batch = store.create_batch(profile.id)
-            e1 = store.add_entry(batch.id, None, "move", "/a.txt", "/new_a.txt")
-            e2 = store.add_entry(batch.id, None, "move", "/b.txt", "/new_b.txt")
-            store.update_entry(e1.id, status="COMPLETED")
-            store.update_entry(e2.id, status="COMPLETED")
-            summary = get_batch_summary(store, batch.id)
-            self.assertEqual(summary.status, "completed")
             store.close()
 
 

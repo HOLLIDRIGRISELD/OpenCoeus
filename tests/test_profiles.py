@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opencoeus.database import AuditStore
+from opencoeus.db import AuditStore
 from opencoeus.profiles import (
     ProfileConfig,
     create_profile,

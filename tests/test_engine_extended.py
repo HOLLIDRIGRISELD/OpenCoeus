@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from opencoeus.config import ScanSettings
-from opencoeus.database import AuditStore
+from opencoeus.db import AuditStore
 from opencoeus.engine import ManifestRow, ScanEngine, ScanResult, write_manifest
 
 
@@ -83,7 +83,7 @@ class WriteManifestTests(unittest.TestCase):
                     "nlp_topic", "nlp_author", "nlp_organization", "nlp_project",
                     "nlp_summary", "nlp_confidence", "nlp_date", "nlp_location",
                     "nlp_camera", "nlp_artist", "nlp_album",
-                    "smart_filename", "smart_destination",
+                    "smart_filename", "smart_destination", "text_snippet",
                 ])
 
     def test_empty_result_produces_header_only_csv(self):
@@ -158,8 +158,9 @@ class ScanEngineEdgeCaseTests(unittest.TestCase):
             progress_messages = []
             store = self._create_store_outside_root(test_root)
             ScanEngine(ScanSettings(test_root, extract_documents=False), store).run(progress_messages.append)
-            self.assertEqual(len(progress_messages), 1)
-            self.assertIn("1/1", progress_messages[0])
+            self.assertEqual(len(progress_messages), 2)
+            self.assertIn("Scanning 1 files", progress_messages[0])
+            self.assertIn("1/1", progress_messages[1])
             store.close()
 
     def test_scan_with_no_progress_callback_does_not_crash(self):

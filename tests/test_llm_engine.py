@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from opencoeus.content_extractor import FileSignals
-from opencoeus.llm_engine import (
+from opencoeus.extractors import FileSignals
+from opencoeus.llm import (
     LLMConfig,
     LLMEngine,
     LLMGenerationResult,
@@ -25,7 +25,7 @@ class LLMEngineTests(unittest.TestCase):
         )
 
     def make_nlp_result(self, **kwargs):
-        from opencoeus.nlp_engine import NLPResult
+        from opencoeus.nlp import NLPResult
         defaults = dict(topic="", author="", organization="", project="",
                         location="", document_type="", summary="", keywords=[],
                         date="", confidence=0.0, smart_filename="", smart_destination="",
@@ -56,9 +56,9 @@ class LLMEngineTests(unittest.TestCase):
     def test_build_prompt_contains_system_instruction(self):
         nlp_result = self.make_nlp_result()
         prompt = self.engine._build_prompt(nlp_result, self.signals)
-        self.assertIn("file naming assistant", prompt)
+        self.assertIn("file organization assistant", prompt)
         self.assertIn("filename", prompt)
-        self.assertIn("destination", prompt)
+        self.assertIn("subfolder", prompt)
 
     def test_build_prompt_truncates_long_text(self):
         long_text = "word " * 2000
@@ -165,9 +165,56 @@ class LLMEngineTests(unittest.TestCase):
 
     def test_user_template_format_keys(self):
         keys = [
-            "{file_type}", "{ext}", "{doc_type}", "{topic}", "{author}",
+            "{base_folder}", "{file_type}", "{ext}", "{doc_type}", "{topic}", "{author}",
             "{org}", "{date}", "{keywords}", "{summary}", "{project}",
             "{location}", "{camera}", "{artist}", "{album}", "{text}",
         ]
         for key in keys:
             self.assertIn(key, USER_TEMPLATE, f"Missing key: {key}")
+
+    def test_parse_output_json_object(self):
+        from opencoeus.llm.engine import clean_snippet
+        raw = 'Here is the JSON:\n{"filename": "2024-03-15_Acme_Corp_Invoice", "subfolder": "Clients/Acme Corp/2024/Invoices"}\nDone'
+        result = self.engine._parse_output(raw)
+        self.assertEqual(result.filename, "2024-03-15_Acme_Corp_Invoice")
+        self.assertEqual(result.destination, "Clients/Acme Corp/2024/Invoices")
+
+    def test_parse_output_json_empty_stays_legacy(self):
+        raw = 'FILENAME: Q2_Summary\nDESTINATION: Reports/2024\n'
+        result = self.engine._parse_output(raw)
+        self.assertEqual(result.filename, "Q2_Summary")
+        self.assertEqual(result.destination, "Reports/2024")
+
+    def test_clean_snippet_strips_markup_and_collapses(self):
+        from opencoeus.llm.engine import clean_snippet
+        text = "<p>Hello  world</p>\n<div>line   two</div>"
+        self.assertEqual(clean_snippet(text), "Hello world line two")
+
+    def test_clean_snippet_truncates_long_text(self):
+        from opencoeus.llm.engine import clean_snippet
+        long_text = "word " * 2000
+        snippet = clean_snippet(long_text, max_chars=600)
+        self.assertLessEqual(len(snippet), 600)
+        self.assertIn("word", snippet)
+
+    def test_clean_snippet_empty(self):
+        from opencoeus.llm.engine import clean_snippet
+        self.assertEqual(clean_snippet(""), "")
+
+    def test_build_chat_prompt_wraps_chat_tokens(self):
+        prompt = self.engine.build_chat_prompt("hello")
+        self.assertIn("<|system|>", prompt)
+        self.assertIn("<|user|>", prompt)
+        self.assertIn("<|assistant|>", prompt)
+        self.assertIn("hello", prompt)
+
+    def test_complete_disabled_returns_error(self):
+        result = self.engine.complete("hello")
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "LLM disabled")
+
+    def test_complete_no_backend_returns_error(self):
+        engine = LLMEngine(LLMConfig(enabled=True, model="nonexistent.gguf"))
+        result = engine.complete("hello")
+        self.assertFalse(result.success)
+        self.assertIn("No LLM backend", result.error)

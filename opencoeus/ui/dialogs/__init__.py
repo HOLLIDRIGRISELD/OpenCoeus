@@ -1,6 +1,3 @@
-from .profile_edit import ProfileEditDialog
-from .rule_edit import RuleEditDialog
-from .batch_detail import BatchDetailDialog
-from .about import AboutDialog
+from .rule_edit_dialog import RuleEditDialog
 
-__all__ = ["ProfileEditDialog", "RuleEditDialog", "BatchDetailDialog", "AboutDialog"]
+__all__ = ["RuleEditDialog"]
