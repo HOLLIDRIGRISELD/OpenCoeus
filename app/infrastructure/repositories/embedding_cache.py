@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.sqlite import insert
 
 from app.infrastructure.database import Database
@@ -78,3 +78,23 @@ class EmbeddingCacheRepository:
         )
         with self._db.session() as session:
             session.execute(statement)
+
+    def prune(self, max_entries: int = 10_000) -> int:
+        limit = max(1, max_entries)
+        with self._db.session() as session:
+            total = session.scalar(select(func.count()).select_from(EmbeddingCacheBlob)) or 0
+            if total <= limit:
+                return 0
+            cutoff = session.scalar(
+                select(EmbeddingCacheBlob.created_at)
+                .order_by(EmbeddingCacheBlob.created_at.desc())
+                .offset(limit)
+                .limit(1)
+            )
+            deleted = session.execute(
+                delete(EmbeddingCacheBlob).where(EmbeddingCacheBlob.created_at <= cutoff)
+            ).rowcount
+            legacy = session.execute(
+                delete(EmbeddingCacheEntry).where(EmbeddingCacheEntry.created_at <= cutoff)
+            ).rowcount
+            return int(deleted or 0) + int(legacy or 0)

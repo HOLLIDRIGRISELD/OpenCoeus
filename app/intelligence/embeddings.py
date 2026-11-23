@@ -52,6 +52,10 @@ class EmbeddingCache(Protocol):
     def set_many(self, model_name: str, vectors: Mapping[str, np.ndarray]) -> None:
         """Store vectors under their text hashes."""
 
+    def prune(self, max_entries: int = 10_000) -> int:
+        """Drop oldest rows above the cap; non-persistent caches may no-op."""
+        return 0
+
 
 def mean_vector(vectors: Sequence[np.ndarray]) -> np.ndarray:
     """Return the L2-normalised mean of already-computed vectors.
@@ -320,6 +324,11 @@ class EmbeddingEngine:
             self._cache.move_to_end(text)
             while len(self._cache) > self._cache_limit:
                 self._cache.popitem(last=False)
+
+    def prune_cache(self, max_entries: int = 10_000) -> int:
+        if self._persistent_cache is None:
+            return 0
+        return self._persistent_cache.prune(max_entries)
 
     def encode_one(self, text: str) -> np.ndarray:
         return self.encode([text])[0]

@@ -112,3 +112,39 @@ def test_empty_purge_skips_vacuum(context: AppContext, monkeypatch) -> None:
 
     assert context.db.purge_session_data() == 0
     assert calls == []
+
+
+def test_embedding_cache_prune_keeps_newest(context: AppContext) -> None:
+    model = context.embeddings.model_name
+    vectors = {
+        f"hash-{index}": np.full(8, index, dtype=np.float64) for index in range(5)
+    }
+    context.embedding_cache.set_many(model, vectors)
+
+    with context.db.engine.begin() as connection:
+        for index in range(5):
+            connection.execute(
+                text(
+                    "UPDATE embedding_cache_blobs SET created_at = :stamp "
+                    "WHERE text_hash = :text_hash"
+                ),
+                {"stamp": f"2026-01-01 00:00:0{index}", "text_hash": f"hash-{index}"},
+            )
+
+    assert context.embedding_cache.prune(max_entries=2) == 3
+    remaining = context.embedding_cache.get_many(model, list(vectors))
+    assert set(remaining) == {"hash-3", "hash-4"}
+
+
+def test_analysis_triggers_cache_prune(
+    context: AppContext, monkeypatch, tmp_path
+) -> None:
+    calls: list[int] = []
+    original = context.embeddings.prune_cache
+    monkeypatch.setattr(
+        context.embeddings, "prune_cache", lambda: calls.append(1) or original()
+    )
+
+    _analyse_one(context, tmp_path)
+
+    assert calls == [1]

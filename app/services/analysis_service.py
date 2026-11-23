@@ -325,6 +325,7 @@ class AnalysisService:
                     cancel.raise_if_cancelled()
                 process(queue.popleft())
 
+        self._embeddings.prune_cache()
         report.duration_seconds = round(time.perf_counter() - started, 3)
         emit(
             progress,
