@@ -498,27 +498,6 @@ class Rule(Base):
     )
 
 
-class OrganisationRule(Base):
-    __tablename__ = "organisation_rules"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(160), nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    match_field: Mapped[str] = mapped_column(String(30), nullable=False)
-    match_op: Mapped[str] = mapped_column(String(20), default="equals", nullable=False)
-    match_value: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    action: Mapped[str] = mapped_column(String(20), default="MOVE", nullable=False)
-    folder_template: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    name_template: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
-    )
-
-
 class ScanProfile(Base):
     __tablename__ = "scan_profiles"
     __table_args__ = (UniqueConstraint("name", name="uq_scan_profile_name"),)

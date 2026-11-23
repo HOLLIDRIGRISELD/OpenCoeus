@@ -25,9 +25,6 @@ class BaseExtractor(ABC):
     version: str = "1"
     formats: tuple[str, ...] = ()
 
-    def supports(self, detected_format: str) -> bool:
-        return detected_format in self.formats
-
     @abstractmethod
     def extract(self, path: Path) -> ExtractionResult:
         """Return extracted text and metadata.

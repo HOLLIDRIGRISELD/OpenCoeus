@@ -74,10 +74,6 @@ class PlanDraft:
         return summary
 
     @property
-    def executable(self) -> list[PlannedAction]:
-        return [action for action in self.actions if action.conflict is None]
-
-    @property
     def blocked(self) -> list[PlannedAction]:
         return [action for action in self.actions if action.conflict is not None]
 

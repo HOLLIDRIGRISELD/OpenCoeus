@@ -361,9 +361,6 @@ class RecommendationService:
     def review_threshold(self) -> float:
         return self._settings.low_confidence
 
-    def is_low_confidence(self, confidence: float | None) -> bool:
-        return confidence is None or confidence < self.review_threshold
-
 
 __all__ = [
     "DuplicateGroup",

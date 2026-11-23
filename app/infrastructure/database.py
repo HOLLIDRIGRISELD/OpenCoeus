@@ -173,11 +173,6 @@ class Database:
             except Exception as exc:  # pragma: no cover - defensive
                 raise DatabaseError(f"Could not initialise database: {exc}") from exc
 
-    def ensure_performance_indexes(self) -> None:
-        with self.engine.begin() as connection:
-            for statement in PERFORMANCE_INDEXES:
-                connection.execute(text(statement))
-
     def purge_session_data(self) -> int:
         """Forget the previous session; keep settings, categories and rules.
 

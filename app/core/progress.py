@@ -30,12 +30,6 @@ class ProgressEvent:
     message: str = ""
     item: str | None = None
 
-    @property
-    def percent(self) -> int | None:
-        if self.total <= 0:
-            return None
-        return max(0, min(100, round(self.current * 100 / self.total)))
-
 
 ProgressCallback = Callable[[ProgressEvent], None]
 

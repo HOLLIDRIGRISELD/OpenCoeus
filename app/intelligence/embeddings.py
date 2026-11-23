@@ -323,10 +323,3 @@ class EmbeddingEngine:
 
     def encode_one(self, text: str) -> np.ndarray:
         return self.encode([text])[0]
-
-    @staticmethod
-    def cosine(a: np.ndarray, b: np.ndarray) -> float:
-        denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
-        if denominator == 0.0:
-            return 0.0
-        return float(np.dot(a, b) / denominator)

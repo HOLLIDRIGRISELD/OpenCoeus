@@ -271,7 +271,6 @@ Static checks:
 ```bash
 python -m compileall -q app tests
 ruff check app tests          # if installed
-mypy app                      # optional; config in pyproject.toml
 ```
 
 ---

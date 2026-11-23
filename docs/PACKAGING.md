@@ -41,7 +41,8 @@ distribution (glibc is not portable across old/new systems).
 cd opencoeus
 python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"              # includes pyinstaller
+pip install -e ".[dev]"
+pip install pyinstaller              # packaging only; not a dev extra
 python -m pytest                     # do not package a failing tree
 ```
 

@@ -33,10 +33,6 @@ class ExtractorRegistry:
             for fmt in extractor.formats:
                 self._by_format[fmt] = extractor
 
-    @property
-    def supported_formats(self) -> list[str]:
-        return sorted(self._by_format)
-
     def extractor_for(self, detected_format: str) -> BaseExtractor | None:
         return self._by_format.get(detected_format)
 

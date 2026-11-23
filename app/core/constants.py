@@ -4,7 +4,6 @@ from __future__ import annotations
 
 APP_NAME = "OpenCoeus"
 APP_VERSION = "0.6.0"
-DB_SCHEMA_VERSION = 1
 
 CHUNKER_VERSION = "1"
 CLASSIFIER_VERSION = "1"
@@ -100,7 +99,6 @@ DEFAULT_CATEGORIES: tuple[tuple[str, str, str], ...] = (
 UNCLASSIFIED = "Unclassified"
 
 STATUS_DISCOVERED = "discovered"
-STATUS_PENDING_EXTRACTION = "pending_extraction"
 STATUS_EXTRACTING = "extracting"
 STATUS_EXTRACTED = "extracted"
 STATUS_PENDING_ANALYSIS = "pending_analysis"
@@ -117,21 +115,4 @@ SUGGESTION_ACCEPTED = "accepted"
 SUGGESTION_REJECTED = "rejected"
 SUGGESTION_APPLIED = "applied"
 
-PLAN_DRAFT = "draft"
-PLAN_APPROVED = "approved"
-PLAN_EXECUTING = "executing"
-PLAN_COMPLETED = "completed"
-PLAN_PARTIAL = "partially_completed"
-PLAN_FAILED = "failed"
-PLAN_REVALIDATION = "revalidation_required"
-
-OP_PENDING = "pending"
-OP_COMPLETED = "completed"
-OP_FAILED = "failed"
-OP_ROLLED_BACK = "rolled_back"
-OP_SKIPPED = "skipped"
-
-ACTION_RENAME = "rename"
-ACTION_MOVE = "move"
-ACTION_RENAME_MOVE = "rename_and_move"
 ACTION_MKDIR = "create_directory"
