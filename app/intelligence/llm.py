@@ -30,10 +30,12 @@ _PROMPT_DIR = Path(__file__).parent / "prompts"
 _INJECTION_PATTERN = re.compile(
     r"(?:\b(?:ignore|disregard|forget)\b[\s*_`~-]*"
     r"(?:(?:all|any|the|your|these|those)\b[\s*_`~-]*)*"
-    r"(?:previous|prior|above|earlier|preceding)\b[\s*_`~-]*(?:instructions|directives)\b)"
-    r"|\b(?:please|kindly)\b[^.\n]{0,80}\b"
-    r"(?:include|return|respond|output|answer|write|say|mention|mark|label|classify|choose|select|set|treat|use)\b"
-    r"|\b(?:for your response|in your response|your task is|you must|you should|when summarizing|when classifying)\b",
+    r"(?:previous|prior|above|earlier|preceding|system)\b[\s*_`~-]*"
+    r"(?:instructions|directives|prompt)\b)"
+    r"|\b(?:you are now|your task is|system prompt|do not follow|pretend to be)\b"
+    r"|\b(?:respond|output|return)\s+(?:with\s+)?only\b"
+    r"|\b(?:please|kindly)\b[^.\n]{0,80}\b(?:in the title|in your (?:response|answer|output))\b"
+    r"|\byou must\b[^.\n]{0,80}\b(?:classify|categorise|categorize|label|mark|title|name|return|output|respond)\b",
     re.IGNORECASE,
 )
 
@@ -144,21 +146,30 @@ class LocalLLMClient:
             },
         )
 
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.1, "num_predict": 600},
-        }
-        try:
-            response = self._request("/api/generate", payload)
+        data: dict[str, object] | None = None
+        for num_predict in (400, 800):
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.1, "num_predict": num_predict},
+            }
+            try:
+                response = self._request("/api/generate", payload)
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                logger.warning("Local LLM analysis failed: %s", exc)
+                return None
             raw_text = response.get("response")
             if not isinstance(raw_text, str):
                 return None
-            data = self._parse_json(raw_text)
-        except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
-            logger.warning("Local LLM analysis failed: %s", exc)
+            try:
+                data = self._parse_json(raw_text)
+                break
+            except ValueError:
+                continue
+        if data is None:
+            logger.warning("Local LLM returned malformed JSON after retry.")
             return None
 
         allowed = set(categories)
@@ -179,9 +190,9 @@ class LocalLLMClient:
             organisation=self._string(data.get("organisation")),
             document_date=self._string(data.get("document_date")),
             confidence=confidence_value,
-            tags=self._string_list(data.get("tags")),
-            evidence=self._string_list(data.get("evidence")),
-            uncertainties=self._string_list(data.get("uncertainties")),
+            tags=self._string_list(data.get("tags"))[:4],
+            evidence=self._string_list(data.get("evidence"))[:3],
+            uncertainties=self._string_list(data.get("uncertainties"))[:2],
             raw=data,
         )
         return result
