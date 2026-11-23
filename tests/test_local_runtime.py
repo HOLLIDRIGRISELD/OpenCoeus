@@ -6,9 +6,11 @@ import os
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import pytest
 
+from app.intelligence import runtime as runtime_module
 from app.intelligence.runtime import LocalRuntime
 
 
@@ -60,14 +62,14 @@ def test_stop_before_start_prevents_popen(monkeypatch: pytest.MonkeyPatch) -> No
     assert runtime.start() is False
 
 
-def test_start_opens_the_visible_app_and_stop_kills_its_tree(
+def test_start_opens_the_headless_server_and_stop_kills_its_tree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = LocalRuntime("http://127.0.0.1:11434", startup_seconds=1)
     probe = iter([False, True])
     monkeypatch.setattr(runtime, "_reachable", lambda: next(probe))
     monkeypatch.setattr(
-        "app.intelligence.runtime._launch_command", lambda: ["ollama app.exe"]
+        "app.intelligence.runtime._launch_command", lambda: ["ollama.exe", "serve"]
     )
     process = FakeProcess()
     launched: list[list[str]] = []
@@ -81,7 +83,7 @@ def test_start_opens_the_visible_app_and_stop_kills_its_tree(
     monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: stopped.append(command))
 
     assert runtime.start() is True
-    assert launched == [["ollama app.exe"]]
+    assert launched == [["ollama.exe", "serve"]]
 
     runtime.stop()
     assert runtime.process is None
@@ -180,3 +182,18 @@ def test_no_launch_command_means_no_process_and_no_crash(
 
     assert runtime.start() is False
     runtime.stop()
+
+
+def test_launch_command_uses_headless_server_on_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    folder = tmp_path / "Programs" / "Ollama"
+    folder.mkdir(parents=True)
+    headless = folder / "ollama.exe"
+    headless.write_bytes(b"")
+    (folder / "ollama app.exe").write_bytes(b"")
+    monkeypatch.setattr(runtime_module.os, "name", "nt")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(runtime_module.shutil, "which", lambda name: None)
+
+    assert runtime_module._launch_command() == [str(headless), "serve"]

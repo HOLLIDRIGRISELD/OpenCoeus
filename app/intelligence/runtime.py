@@ -1,8 +1,8 @@
 """Owns the local Ollama runtime for the lifetime of the desktop app.
 
-OpenCoeus opens the Ollama desktop app (tray icon) when it starts and closes it,
-including the server it spawns, when OpenCoeus closes. A runtime that is already
-listening (started by the user or another app) is reused and never stopped.
+OpenCoeus starts the headless Ollama server when it starts and stops it when
+OpenCoeus closes. A runtime that is already listening (started by the user or
+another app) is reused and never stopped.
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ logger = get_logger(__name__)
 
 def _launch_command() -> list[str] | None:
     if os.name == "nt":
-        app = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama app.exe"
-        if app.is_file():
-            return [str(app)]
+        exe = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
+        if exe.is_file():
+            return [str(exe), "serve"]
     cli = shutil.which("ollama")
     return [cli, "serve"] if cli else None
 
