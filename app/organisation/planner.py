@@ -15,6 +15,7 @@ from pathlib import Path
 from app.core.constants import ACTION_MKDIR
 from app.domain.enums import ActionType
 from app.domain.models import PlannedAction, PlanSummary
+from app.intelligence.naming_engine import deduplicate_filename
 from app.organisation.validator import PathGuard, path_key
 
 
@@ -137,6 +138,7 @@ class OrganisationPlanner:
 
         seen_files: set[int] = set()
         claimed: set[str] = set()
+        claimed_names: dict[str, set[str]] = {}
         candidates: list[tuple[PlanEntry, Path, bool]] = []
 
         for entry in entries:
@@ -163,17 +165,24 @@ class OrganisationPlanner:
         vacating = {path_key(entry.source_path) for entry, _, _ in candidates}
         for entry, destination, _ in candidates:
             source = Path(entry.source_path)
+            taken = claimed_names.setdefault(path_key(destination.parent), set())
+            disambiguated_name, warning = deduplicate_filename(destination.name, taken)
+            if warning:
+                destination = destination.with_name(disambiguated_name)
             key = str(destination.resolve(strict=False)).lower()
             check = guard.check_destination(
                 destination, source=source, occupied=claimed, vacating=vacating
             )
             claimed.add(key)
+            taken.add(destination.name)
 
             issues = list(check.issues)
             issues.extend(guard.check_source(source))
 
             conflicts = [issue for issue in issues if issue.is_error]
             notes = list(entry.notes)
+            if warning:
+                notes.append(warning)
             notes.extend(issue.message for issue in issues if issue.is_error)
             notes.extend(issue.message for issue in issues if not issue.is_error)
 

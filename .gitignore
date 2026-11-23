@@ -88,3 +88,6 @@ secrets.json
 
 # Generated knowledge-graph output
 graphify-out/
+
+# Local plan workspace
+.superpowers/

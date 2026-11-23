@@ -37,7 +37,7 @@ def _case_insensitive(directory: Path) -> bool:
 
 
 
-def test_planner_assigns_actions_and_detects_duplicate_targets(tmp_path: Path) -> None:
+def test_planner_disambiguates_duplicate_targets(tmp_path: Path) -> None:
     root = tmp_path / "library"
     first = _write(root / "Downloads" / "a.txt", "alpha")
     second = _write(root / "Downloads" / "b.txt", "beta")
@@ -64,18 +64,35 @@ def test_planner_assigns_actions_and_detects_duplicate_targets(tmp_path: Path) -
         ],
     )
 
-    assert len(draft.actions) == 2
-    safe = [action for action in draft.actions if action.conflict is None]
-    blocked = [action for action in draft.actions if action.conflict is not None]
-    assert len(safe) == 1
-    assert len(blocked) == 1
-    assert "same destination" in blocked[0].conflict.lower()
-    assert blocked[0].action is ActionType.RENAME_AND_MOVE
-    assert draft.summary.total == 2
-    assert draft.summary.conflicts == 1
+    assert sorted(action.new_name for action in draft.actions) == ["Alpha 2.txt", "Alpha.txt"]
+    assert all(action.conflict is None for action in draft.actions)
+    assert draft.summary.conflicts == 0
     assert draft.summary.needs_review == 1
     assert draft.summary.renames == 2
     assert draft.summary.moves == 2
+    assert any("2" in " ".join(action.notes) for action in draft.actions)
+
+
+def test_planner_keeps_existing_destination_conflict(tmp_path: Path) -> None:
+    root = tmp_path / "library"
+    _write(root / "Finance" / "Alpha.txt", "occupied")
+    source = _write(root / "Downloads" / "b.txt", "beta")
+
+    draft = OrganisationPlanner(low_confidence=0.6).plan(
+        root,
+        [
+            PlanEntry(
+                file_id=2,
+                source_path=source,
+                original_name="b.txt",
+                new_name="Alpha.txt",
+                relative_folder=Path("Finance"),
+                confidence=0.9,
+            ),
+        ],
+    )
+
+    assert draft.actions[0].conflict is not None
 
 
 def test_planner_marks_unchanged_entries(tmp_path: Path) -> None:

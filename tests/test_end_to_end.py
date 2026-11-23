@@ -40,7 +40,7 @@ def test_demo_pipeline_end_to_end(context: AppContext, demo_library: Path) -> No
     assert preview.considered == 18
     assert preview.draft.actions
     assert len(preview.draft.actions) >= 16
-    assert preview.summary.conflicts >= 1
+    assert preview.summary.conflicts == 0
     assert preview.summary.renames >= 14
 
     plan_id = context.organisation.create_plan()
@@ -57,7 +57,7 @@ def test_demo_pipeline_end_to_end(context: AppContext, demo_library: Path) -> No
 
     assert report.completed
     assert report.failed == []
-    assert report.skipped
+    assert not report.skipped
     assert report.succeeded >= 15
     assert report.created_directories
 
@@ -66,15 +66,9 @@ def test_demo_pipeline_end_to_end(context: AppContext, demo_library: Path) -> No
         assert not operation.source_path.exists()
         assert operation.undoable is True
 
-    blocked_sources = [
-        item.source_path
-        for item in context.organisation.items(plan_id)
-        if item.conflict
-    ]
-    assert blocked_sources
-    assert all(Path(source).exists() for source in blocked_sources)
+    assert all(item.conflict is None for item in context.organisation.items(plan_id))
 
-    assert context.organisation.plan(plan_id)["status"] == "partially_completed"
+    assert context.organisation.plan(plan_id)["status"] == "completed"
 
     found = context.search.search("invoice", mode="hybrid", limit=10)
     assert found.hits
