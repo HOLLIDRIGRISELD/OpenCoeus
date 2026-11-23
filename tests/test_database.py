@@ -1,1046 +1,191 @@
-import tempfile
-import unittest
+"""Configuration, database bootstrap, FTS index and repository primitives."""
+
+from __future__ import annotations
+
 from pathlib import Path
 
-from opencoeus.db import AuditStore
-
-
-class AuditStoreRecordTests(unittest.TestCase):
-    def test_records_new_file_successfully(self):
-        # VERIFIES THAT A NEW FILE CAN BE RECORDED IN THE AUDIT DATABASE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.record_file("/test/file.txt", 1024, "abc123", "unique")
-            # RECORDING SHOULD NOT RAISE ANY ERRORS.
-            store.close()
-
-    def test_updates_existing_file_record(self):
-        # VERIFIES THAT RECORDING THE SAME FILE PATH TWICE UPDATES THE EXISTING RECORD.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.record_file("/test/file.txt", 1024, "hash1", "unique")
-            store.record_file("/test/file.txt", 2048, "hash2", "duplicate")
-            # THE SECOND RECORD SHOULD UPDATE, NOT CREATE A NEW ROW.
-            store.close()
-
-    def test_records_file_with_none_hash(self):
-        # VERIFIES THAT A FILE CAN BE RECORDED WITH A NONE HASH VALUE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.record_file("/test/protected.bin", 512, None, "protected")
-            store.close()
-
-    def test_records_multiple_files_independently(self):
-        # VERIFIES THAT MULTIPLE DIFFERENT FILES ARE STORED AS SEPARATE RECORDS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.record_file("/file_a.txt", 100, "hash_a", "unique")
-            store.record_file("/file_b.txt", 200, "hash_b", "duplicate")
-            store.record_file("/file_c.txt", 300, None, "protected")
-            store.close()
-
-
-class AuditStoreReserveTitleTests(unittest.TestCase):
-    def test_reserves_unique_title(self):
-        # VERIFIES THAT A TITLE NOT ALREADY IN THE DATABASE IS RESERVED AS IS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            reserved = store.reserve_title("My Document Title", "/path/to/file.pdf")
-            self.assertEqual(reserved, "My Document Title")
-            store.close()
-
-    def test_returns_same_title_for_same_source_path(self):
-        # VERIFIES THAT REQUESTING THE SAME TITLE FOR THE SAME SOURCE RETURNS THE SAME RESULT.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            first_reservation = store.reserve_title("First Title", "/same/path.pdf")
-            second_reservation = store.reserve_title("Different Title", "/same/path.pdf")
-            self.assertEqual(first_reservation, second_reservation)
-            self.assertEqual(first_reservation, "First Title")
-            store.close()
-
-    def test_appends_number_on_duplicate_title(self):
-        # VERIFIES THAT A DUPLICATE TITLE GETS A NUMBER SUFFIX LIKE (2).
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            first_reservation = store.reserve_title("Shared Title", "/file_a.pdf")
-            second_reservation = store.reserve_title("Shared Title", "/file_b.pdf")
-            self.assertEqual(first_reservation, "Shared Title")
-            self.assertEqual(second_reservation, "Shared Title (2)")
-            store.close()
-
-    def test_appends_incrementing_numbers(self):
-        # VERIFIES THAT MULTIPLE DUPLICATE TITLES GET INCREMENTING NUMBERS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            first = store.reserve_title("Collision", "/a.pdf")
-            second = store.reserve_title("Collision", "/b.pdf")
-            third = store.reserve_title("Collision", "/c.pdf")
-            fourth = store.reserve_title("Collision", "/d.pdf")
-            self.assertEqual(first, "Collision")
-            self.assertEqual(second, "Collision (2)")
-            self.assertEqual(third, "Collision (3)")
-            self.assertEqual(fourth, "Collision (4)")
-            store.close()
-
-    def test_different_titles_for_different_source_paths(self):
-        # VERIFIES THAT DIFFERENT SOURCE PATHS CAN HAVE DIFFERENT TITLES.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            title_a = store.reserve_title("Alpha Document", "/alpha.pdf")
-            title_b = store.reserve_title("Beta Document", "/beta.pdf")
-            self.assertEqual(title_a, "Alpha Document")
-            self.assertEqual(title_b, "Beta Document")
-            store.close()
-
-
-class AuditStoreCloseTests(unittest.TestCase):
-    def test_close_disposes_engine(self):
-        # VERIFIES THAT close() DOES NOT RAISE ERRORS AND CAN BE CALLED MULTIPLE TIMES.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.close()
-            # DOUBLE CLOSE SHOULD NOT RAISE.
-            store.close()
-
-
-# STAGE 2: PROFILE MANAGEMENT TESTS.
-
-
-class AuditStoreProfileTests(unittest.TestCase):
-    def test_create_profile_returns_profile_with_id(self):
-        # VERIFIES THAT A NEW PROFILE IS CREATED AND HAS AN INTEGER ID ASSIGNED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Work Files", "/Users/me/Documents")
-            self.assertIsNotNone(profile.id)
-            self.assertIsInstance(profile.id, int)
-            self.assertEqual(profile.name, "Work Files")
-            store.close()
-
-    def test_create_profile_stores_default_values(self):
-        # VERIFIES THAT DEFAULT FOLDER LISTS ARE EMPTY JSON ARRAYS AND EXTRACTION IS TRUE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Defaults")
-            self.assertEqual(profile.included_folders, "[]")
-            self.assertEqual(profile.excluded_folders, "[]")
-            self.assertEqual(profile.custom_protected_patterns, "[]")
-            self.assertTrue(profile.document_extraction)
-            store.close()
-
-    def test_list_profiles_returns_all_ordered_by_name(self):
-        # VERIFIES THAT LISTING PROFILES RETURNS THEM IN ALPHABETICAL NAME ORDER.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.create_profile("Zulu Profile")
-            store.create_profile("Alpha Profile")
-            store.create_profile("Mid Profile")
-            profiles = store.list_profiles()
-            names = [p.name for p in profiles]
-            self.assertEqual(names, ["Alpha Profile", "Mid Profile", "Zulu Profile"])
-            store.close()
-
-    def test_get_profile_returns_profile_by_id(self):
-        # VERIFIES THAT A PROFILE CAN BE RETRIEVED BY ITS ID.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            created = store.create_profile("Fetchable")
-            fetched = store.get_profile(created.id)
-            self.assertIsNotNone(fetched)
-            self.assertEqual(fetched.name, "Fetchable")
-            store.close()
-
-    def test_get_profile_returns_none_for_missing_id(self):
-        # VERIFIES THAT REQUESTING A NONEXISTENT PROFILE ID RETURNS NONE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.get_profile(9999)
-            self.assertIsNone(result)
-            store.close()
-
-    def test_get_profile_by_name_returns_profile(self):
-        # VERIFIES THAT A PROFILE CAN BE RETRIEVED BY ITS UNIQUE NAME.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.create_profile("Named Profile")
-            found = store.get_profile_by_name("Named Profile")
-            self.assertIsNotNone(found)
-            self.assertEqual(found.name, "Named Profile")
-            store.close()
-
-    def test_get_profile_by_name_returns_none_for_missing(self):
-        # VERIFIES THAT REQUESTING A NONEXISTENT PROFILE NAME RETURNS NONE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.get_profile_by_name("Ghost Profile")
-            self.assertIsNone(result)
-            store.close()
-
-    def test_update_profile_modifies_fields(self):
-        # VERIFIES THAT UPDATE CHANGES SPECIFIED FIELDS ON A PROFILE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Original")
-            store.update_profile(profile.id, name="Updated", root_path="/new/path")
-            updated = store.get_profile(profile.id)
-            self.assertEqual(updated.name, "Updated")
-            self.assertEqual(updated.root_path, "/new/path")
-            store.close()
-
-    def test_update_profile_serializes_list_fields(self):
-        # VERIFIES THAT LIST FIELDS ARE AUTOMATICALLY CONVERTED TO JSON STRINGS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Lists")
-            store.update_profile(profile.id, included_folders=["docs", "images"], excluded_folders=["temp"])
-            updated = store.get_profile(profile.id)
-            self.assertEqual(updated.included_folders, '["docs", "images"]')
-            self.assertEqual(updated.excluded_folders, '["temp"]')
-            store.close()
-
-    def test_update_profile_returns_none_for_missing_id(self):
-        # VERIFIES THAT UPDATING A NONEXISTENT PROFILE RETURNS NONE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.update_profile(9999, name="Nope")
-            self.assertIsNone(result)
-            store.close()
-
-    def test_delete_profile_returns_true(self):
-        # VERIFIES THAT DELETING AN EXISTING PROFILE RETURNS TRUE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("To Delete")
-            result = store.delete_profile(profile.id)
-            self.assertTrue(result)
-            self.assertIsNone(store.get_profile(profile.id))
-            store.close()
-
-    def test_delete_profile_returns_false_for_missing(self):
-        # VERIFIES THAT DELETING A NONEXISTENT PROFILE RETURNS FALSE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.delete_profile(9999)
-            self.assertFalse(result)
-            store.close()
-
-    def test_delete_profile_cascades_classifications_and_rules(self):
-        # VERIFIES THAT DELETING A PROFILE REMOVES ITS ASSOCIATED CLASSIFICATIONS AND RULES.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Cascade")
-            store.save_classifications(profile.id, [
-                {"folder_path": "/a", "classification": "stable", "recommended_action": "no_action"},
-            ])
-            store.create_rule(profile.id, "Test Rule", "extension", {}, "/dest/{filename}")
-            store.delete_profile(profile.id)
-            self.assertEqual(len(store.get_classifications(profile.id)), 0)
-            self.assertEqual(len(store.get_rules(profile.id)), 0)
-            store.close()
-
-
-# STAGE 2: FOLDER CLASSIFICATION TESTS.
-
-
-class AuditStoreClassificationTests(unittest.TestCase):
-    def _create_profile_with_store(self, store: AuditStore) -> int:
-        # HELPER TO CREATE A PROFILE AND RETURN ITS ID.
-        profile = store.create_profile("Classification Test")
-        return profile.id
-
-    def test_save_classifications_stores_records(self):
-        # VERIFIES THAT SAVING CLASSIFICATIONS PERSISTS THEM IN THE DATABASE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_classifications(profile_id, [
-                {"folder_path": "/projects/alpha", "classification": "stable", "recommended_action": "no_action"},
-                {"folder_path": "/temp/scratch", "classification": "disposable", "recommended_action": "suggest_delete"},
-            ])
-            results = store.get_classifications(profile_id)
-            self.assertEqual(len(results), 2)
-            store.close()
-
-    def test_save_classifications_replaces_existing(self):
-        # VERIFIES THAT SAVING NEW CLASSIFICATIONS REPLACES THE OLD ONES FOR A PROFILE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_classifications(profile_id, [
-                {"folder_path": "/old", "classification": "stable", "recommended_action": "no_action"},
-            ])
-            store.save_classifications(profile_id, [
-                {"folder_path": "/new_a", "classification": "active", "recommended_action": "organize"},
-                {"folder_path": "/new_b", "classification": "active", "recommended_action": "organize"},
-            ])
-            results = store.get_classifications(profile_id)
-            self.assertEqual(len(results), 2)
-            paths = {c.folder_path for c in results}
-            self.assertEqual(paths, {"/new_a", "/new_b"})
-            store.close()
-
-    def test_get_classifications_returns_empty_for_profile_with_none(self):
-        # VERIFIES THAT A PROFILE WITH NO CLASSIFICATIONS RETURNS AN EMPTY LIST.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            results = store.get_classifications(profile_id)
-            self.assertEqual(results, [])
-            store.close()
-
-    def test_update_classification_override_sets_value(self):
-        # VERIFIES THAT A USER OVERRIDE CAN BE SET ON A CLASSIFICATION.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_classifications(profile_id, [
-                {"folder_path": "/data", "classification": "unknown", "recommended_action": "ask_user"},
-            ])
-            classification = store.get_classifications(profile_id)[0]
-            result = store.update_classification_override(classification.id, "stable")
-            self.assertTrue(result)
-            updated = store.get_classifications(profile_id)[0]
-            self.assertEqual(updated.user_override, "stable")
-            store.close()
-
-    def test_update_classification_override_clears_value(self):
-        # VERIFIES THAT A USER OVERRIDE CAN BE SET BACK TO NONE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_classifications(profile_id, [
-                {"folder_path": "/data", "classification": "unknown", "recommended_action": "ask_user",
-                 "user_override": "stable"},
-            ])
-            classification = store.get_classifications(profile_id)[0]
-            store.update_classification_override(classification.id, None)
-            updated = store.get_classifications(profile_id)[0]
-            self.assertIsNone(updated.user_override)
-            store.close()
-
-    def test_update_classification_override_returns_false_for_missing(self):
-        # VERIFIES THAT UPDATING A NONEXISTENT CLASSIFICATION RETURNS FALSE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.update_classification_override(9999, "stable")
-            self.assertFalse(result)
-            store.close()
-
-    def test_classifications_store_reason(self):
-        # VERIFIES THAT THE REASON FIELD IS PERSISTED ON A CLASSIFICATION.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_classifications(profile_id, [
-                {"folder_path": "/reasoned", "classification": "stable", "recommended_action": "no_action",
-                 "reason": "Contains production data"},
-            ])
-            result = store.get_classifications(profile_id)[0]
-            self.assertEqual(result.reason, "Contains production data")
-            store.close()
-
-
-# STAGE 2: ORGANIZATION RULE TESTS.
-
-
-class AuditStoreRuleTests(unittest.TestCase):
-    def _create_profile_with_store(self, store: AuditStore) -> int:
-        # HELPER TO CREATE A PROFILE AND RETURN ITS ID.
-        profile = store.create_profile("Rule Test")
-        return profile.id
-
-    def test_create_rule_returns_rule_with_id(self):
-        # VERIFIES THAT A NEW RULE IS CREATED AND HAS AN INTEGER ID ASSIGNED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            rule = store.create_rule(profile_id, "By Extension", "extension", {"extensions": [".pdf"]}, "/docs/{filename}")
-            self.assertIsNotNone(rule.id)
-            self.assertEqual(rule.name, "By Extension")
-            self.assertEqual(rule.rule_type, "extension")
-            store.close()
-
-    def test_get_rules_returns_all_ordered_by_priority(self):
-        # VERIFIES THAT RULES ARE RETURNED IN PRIORITY ORDER (LOWEST FIRST).
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.create_rule(profile_id, "Low Priority", "extension", {}, "/a", priority=10)
-            store.create_rule(profile_id, "High Priority", "extension", {}, "/b", priority=1)
-            store.create_rule(profile_id, "Mid Priority", "extension", {}, "/c", priority=5)
-            rules = store.get_rules(profile_id)
-            names = [r.name for r in rules]
-            self.assertEqual(names, ["High Priority", "Mid Priority", "Low Priority"])
-            store.close()
-
-    def test_get_enabled_rules_excludes_disabled(self):
-        # VERIFIES THAT ONLY ENABLED RULES ARE RETURNED BY get_enabled_rules.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.create_rule(profile_id, "Enabled", "extension", {}, "/a", enabled=True)
-            store.create_rule(profile_id, "Disabled", "extension", {}, "/b", enabled=False)
-            enabled = store.get_enabled_rules(profile_id)
-            names = [r.name for r in enabled]
-            self.assertEqual(names, ["Enabled"])
-            store.close()
-
-    def test_update_rule_modifies_fields(self):
-        # VERIFIES THAT UPDATE CHANGES SPECIFIED FIELDS ON A RULE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            rule = store.create_rule(profile_id, "Original", "extension", {}, "/old")
-            store.update_rule(rule.id, name="Renamed", enabled=False)
-            updated = store.get_rules(profile_id)[0]
-            self.assertEqual(updated.name, "Renamed")
-            self.assertFalse(updated.enabled)
-            store.close()
-
-    def test_update_rule_serializes_rule_config(self):
-        # VERIFIES THAT A DICT RULE_CONFIG IS AUTOMATICALLY SERIALIZED TO JSON.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            rule = store.create_rule(profile_id, "Config", "extension", {}, "/dest")
-            store.update_rule(rule.id, rule_config={"key": "value", "number": 42})
-            updated = store.get_rules(profile_id)[0]
-            self.assertEqual(updated.rule_config, '{"key": "value", "number": 42}')
-            store.close()
-
-    def test_update_rule_returns_none_for_missing(self):
-        # VERIFIES THAT UPDATING A NONEXISTENT RULE RETURNS NONE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.update_rule(9999, name="Nope")
-            self.assertIsNone(result)
-            store.close()
-
-    def test_delete_rule_returns_true(self):
-        # VERIFIES THAT DELETING AN EXISTING RULE RETURNS TRUE AND REMOVES IT.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            rule = store.create_rule(profile_id, "Delete Me", "extension", {}, "/dest")
-            result = store.delete_rule(rule.id)
-            self.assertTrue(result)
-            self.assertEqual(len(store.get_rules(profile_id)), 0)
-            store.close()
-
-    def test_delete_rule_returns_false_for_missing(self):
-        # VERIFIES THAT DELETING A NONEXISTENT RULE RETURNS FALSE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.delete_rule(9999)
-            self.assertFalse(result)
-            store.close()
-
-
-# STAGE 2: PROPOSED ACTION TESTS.
-
-
-class AuditStoreProposedActionTests(unittest.TestCase):
-    def _create_profile_with_store(self, store: AuditStore) -> int:
-        # HELPER TO CREATE A PROFILE AND RETURN ITS ID.
-        profile = store.create_profile("Action Test")
-        return profile.id
-
-    def test_save_proposed_actions_stores_records(self):
-        # VERIFIES THAT SAVING PROPOSED ACTIONS PERSISTS THEM IN THE DATABASE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_proposed_actions(profile_id, [
-                {"original_path": "/old/file_a.txt", "proposed_path": "/new/file_a.txt", "action_type": "move"},
-                {"original_path": "/old/file_b.txt", "proposed_path": "/new/file_b.txt", "action_type": "move"},
-            ])
-            results = store.get_proposed_actions(profile_id)
-            self.assertEqual(len(results), 2)
-            store.close()
-
-    def test_save_proposed_actions_replaces_existing(self):
-        # VERIFIES THAT SAVING NEW ACTIONS REPLACES PREVIOUS ONES FOR A PROFILE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_proposed_actions(profile_id, [
-                {"original_path": "/old/a", "proposed_path": "/new/a", "action_type": "move"},
-            ])
-            store.save_proposed_actions(profile_id, [
-                {"original_path": "/new/b", "proposed_path": "/dest/b", "action_type": "rename"},
-                {"original_path": "/new/c", "proposed_path": "/dest/c", "action_type": "rename"},
-                {"original_path": "/new/d", "proposed_path": "/dest/d", "action_type": "rename"},
-            ])
-            results = store.get_proposed_actions(profile_id)
-            self.assertEqual(len(results), 3)
-            store.close()
-
-    def test_approve_action_sets_approved_true(self):
-        # VERIFIES THAT APPROVING AN ACTION MARKS IT AS APPROVED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_proposed_actions(profile_id, [
-                {"original_path": "/file.txt", "proposed_path": "/new.txt", "action_type": "move"},
-            ])
-            action = store.get_proposed_actions(profile_id)[0]
-            self.assertFalse(action.approved)
-            result = store.approve_action(action.id)
-            self.assertTrue(result)
-            updated = store.get_proposed_actions(profile_id)[0]
-            self.assertTrue(updated.approved)
-            store.close()
-
-    def test_approve_action_returns_false_for_missing(self):
-        # VERIFIES THAT APPROVING A NONEXISTENT ACTION RETURNS FALSE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.approve_action(9999)
-            self.assertFalse(result)
-            store.close()
-
-    def test_approve_all_actions_marks_all_as_approved(self):
-        # VERIFIES THAT approve_all_actions MARKS EVERY ACTION AS APPROVED AND RETURNS COUNT.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            store.save_proposed_actions(profile_id, [
-                {"original_path": "/a.txt", "proposed_path": "/new_a.txt", "action_type": "move"},
-                {"original_path": "/b.txt", "proposed_path": "/new_b.txt", "action_type": "move"},
-                {"original_path": "/c.txt", "proposed_path": "/new_c.txt", "action_type": "delete"},
-            ])
-            count = store.approve_all_actions(profile_id)
-            self.assertEqual(count, 3)
-            actions = store.get_proposed_actions(profile_id)
-            self.assertTrue(all(a.approved for a in actions))
-            store.close()
-
-    def test_approve_all_actions_returns_zero_for_empty(self):
-        # VERIFIES THAT approve_all_actions RETURNS ZERO WHEN NO ACTIONS EXIST.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            count = store.approve_all_actions(profile_id)
-            self.assertEqual(count, 0)
-            store.close()
-
-    def test_proposed_actions_store_rule_id(self):
-        # VERIFIES THAT THE OPTIONAL RULE_ID FIELD IS PERSISTED ON A PROPOSED ACTION.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile_id = self._create_profile_with_store(store)
-            rule = store.create_rule(profile_id, "Test Rule", "extension", {}, "/dest")
-            store.save_proposed_actions(profile_id, [
-                {"original_path": "/file.txt", "proposed_path": "/new.txt", "action_type": "move",
-                 "rule_id": rule.id},
-            ])
-            action = store.get_proposed_actions(profile_id)[0]
-            self.assertEqual(action.rule_id, rule.id)
-            store.close()
-
-
-# STAGE 2: EXTENDED FILE AUDIT COLUMNS TESTS.
-
-
-class AuditStoreExtendedColumnsTests(unittest.TestCase):
-    def test_extended_file_audit_columns_exist_in_schema(self):
-        # VERIFIES THAT THE NEW STAGE 2 COLUMNS ON FILE_AUDITS ARE PRESENT IN THE DATABASE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            store.record_file("/test/doc.pdf", 2048, "abc123", "unique")
-            # EXTENDED COLUMNS SHOULD EXIST AND DEFAULT TO EMPTY STRINGS WHEN NOT PROVIDED.
-            with store.session_factory() as session:
-                from sqlalchemy import text
-                result = session.execute(
-                    text("SELECT relative_path, extension, modified_at, folder_path FROM file_audits LIMIT 1")
-                ).fetchone()
-                self.assertIsNotNone(result)
-                self.assertEqual(result[0], "")
-                self.assertEqual(result[1], "")
-                self.assertIsNone(result[2])
-                self.assertEqual(result[3], "")
-            # EXTENDED COLUMNS SHOULD PERSIST WHEN PROVIDED.
-            store.record_file(
-                "/test/doc2.pdf", 4096, "def456", "unique",
-                relative_path="doc2.pdf", extension=".pdf",
-                modified_at=None, folder_path="/test",
-            )
-            with store.session_factory() as session:
-                result2 = session.execute(
-                    text("SELECT relative_path, extension, folder_path FROM file_audits WHERE path = '/test/doc2.pdf'")
-                ).fetchone()
-                self.assertEqual(result2[0], "doc2.pdf")
-                self.assertEqual(result2[1], ".pdf")
-                self.assertEqual(result2[2], "/test")
-            store.close()
-
-
-# STAGE 2: PROPOSED ACTION REASON TESTS.
-
-
-class AuditStoreProposedActionReasonTests(unittest.TestCase):
-    def test_proposed_actions_store_reason(self):
-        # VERIFIES THAT THE REASON FIELD IS PERSISTED ON A PROPOSED ACTION.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Reason Test")
-            store.save_proposed_actions(profile.id, [
-                {"original_path": "/file.txt", "proposed_path": "/new.txt", "action_type": "move",
-                 "reason": "Matched rule 'Documents' (extension)"},
-            ])
-            action = store.get_proposed_actions(profile.id)[0]
-            self.assertEqual(action.reason, "Matched rule 'Documents' (extension)")
-            store.close()
-
-    def test_proposed_actions_reason_defaults_to_empty(self):
-        # VERIFIES THAT REASON DEFAULTS TO EMPTY STRING WHEN NOT PROVIDED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Reason Default")
-            store.save_proposed_actions(profile.id, [
-                {"original_path": "/file.txt", "proposed_path": "/new.txt", "action_type": "move"},
-            ])
-            action = store.get_proposed_actions(profile.id)[0]
-            self.assertEqual(action.reason, "")
-            store.close()
-
-
-# STAGE 2: PROPOSED ACTION REJECTION TESTS.
-
-
-class AuditStoreRejectActionTests(unittest.TestCase):
-    def test_reject_action_removes_action(self):
-        # VERIFIES THAT REJECTING AN ACTION DELETES IT FROM THE DATABASE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Reject Test")
-            store.save_proposed_actions(profile.id, [
-                {"original_path": "/file.txt", "proposed_path": "/new.txt", "action_type": "move"},
-            ])
-            action = store.get_proposed_actions(profile.id)[0]
-            result = store.reject_action(action.id)
-            self.assertTrue(result)
-            self.assertEqual(len(store.get_proposed_actions(profile.id)), 0)
-            store.close()
-
-    def test_reject_action_returns_false_for_missing(self):
-        # VERIFIES THAT REJECTING A NONEXISTENT ACTION RETURNS FALSE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.reject_action(9999)
-            self.assertFalse(result)
-            store.close()
-
-    def test_delete_proposed_actions_by_ids_removes_multiple(self):
-        # VERIFIES THAT MULTIPLE ACTIONS CAN BE DELETED BY THEIR IDS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Batch Reject")
-            store.save_proposed_actions(profile.id, [
-                {"original_path": "/a.txt", "proposed_path": "/new_a.txt", "action_type": "move"},
-                {"original_path": "/b.txt", "proposed_path": "/new_b.txt", "action_type": "move"},
-                {"original_path": "/c.txt", "proposed_path": "/new_c.txt", "action_type": "move"},
-            ])
-            actions = store.get_proposed_actions(profile.id)
-            deleted = store.delete_proposed_actions_by_ids([actions[0].id, actions[2].id])
-            self.assertEqual(deleted, 2)
-            remaining = store.get_proposed_actions(profile.id)
-            self.assertEqual(len(remaining), 1)
-            self.assertEqual(remaining[0].original_path, "/b.txt")
-            store.close()
-
-    def test_delete_proposed_actions_by_ids_returns_zero_for_empty(self):
-        # VERIFIES THAT PASSING AN EMPTY LIST RETURNS ZERO DELETED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            count = store.delete_proposed_actions_by_ids([])
-            self.assertEqual(count, 0)
-            store.close()
-
-
-# STAGE 3: TRANSACTION BATCH TESTS.
-
-
-class AuditStoreTransactionBatchTests(unittest.TestCase):
-    def test_create_batch_returns_batch_with_id(self):
-        # VERIFIES THAT A NEW BATCH IS CREATED AND HAS AN INTEGER ID.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Batch Test")
-            batch = store.create_batch(profile.id, "Move 5 files")
-            self.assertIsNotNone(batch.id)
-            self.assertIsInstance(batch.id, int)
-            self.assertEqual(batch.scan_profile_id, profile.id)
-            self.assertEqual(batch.description, "Move 5 files")
-            self.assertEqual(batch.status, "PENDING")
-            store.close()
-
-    def test_create_batch_default_status(self):
-        # VERIFIES THAT A NEW BATCH DEFAULTS TO PENDING STATUS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Default Status")
-            batch = store.create_batch(profile.id)
-            self.assertEqual(batch.status, "PENDING")
-            self.assertIsNone(batch.completed_at)
-            self.assertIsNone(batch.undone_at)
-            store.close()
-
-    def test_mark_batch_updates_status(self):
-        # VERIFIES THAT mark_batch CHANGES THE STATUS FIELD.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Mark Batch")
-            batch = store.create_batch(profile.id)
-            result = store.mark_batch(batch.id, "COMPLETED")
-            self.assertTrue(result)
-            batches = store.get_undoable_batches(profile.id)
-            self.assertEqual(len(batches), 1)
-            self.assertEqual(batches[0].status, "COMPLETED")
-            store.close()
-
-    def test_mark_batch_sets_timestamps(self):
-        # VERIFIES THAT mark_batch CAN SET COMPLETED_AT AND UNDONE_AT.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            from datetime import datetime
-            profile = store.create_profile("Timestamps")
-            batch = store.create_batch(profile.id)
-            now = datetime.now()
-            store.mark_batch(batch.id, "COMPLETED", completed_at=now)
-            batches = store.get_undoable_batches()
-            self.assertEqual(len(batches), 1)
-            self.assertIsNotNone(batches[0].completed_at)
-            store.close()
-
-    def test_mark_batch_returns_false_for_missing(self):
-        # VERIFIES THAT mark_batch RETURNS FALSE FOR NONEXISTENT BATCH.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.mark_batch(9999, "COMPLETED")
-            self.assertFalse(result)
-            store.close()
-
-    def test_get_undoable_batches_returns_completed(self):
-        # VERIFIES THAT ONLY COMPLETED BATCHES ARE RETURNED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Undoable")
-            b1 = store.create_batch(profile.id, "batch1")
-            b2 = store.create_batch(profile.id, "batch2")
-            store.mark_batch(b1.id, "COMPLETED")
-            store.mark_batch(b2.id, "FAILED")
-            undoable = store.get_undoable_batches(profile.id)
-            self.assertEqual(len(undoable), 1)
-            self.assertEqual(undoable[0].id, b1.id)
-            store.close()
-
-    def test_get_undoable_batches_reverse_order(self):
-        # VERIFIES THAT BATCHES ARE RETURNED IN REVERSE ID ORDER (MOST RECENT FIRST).
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Order")
-            b1 = store.create_batch(profile.id, "first")
-            b2 = store.create_batch(profile.id, "second")
-            b3 = store.create_batch(profile.id, "third")
-            store.mark_batch(b1.id, "COMPLETED")
-            store.mark_batch(b2.id, "COMPLETED")
-            store.mark_batch(b3.id, "COMPLETED")
-            undoable = store.get_undoable_batches(profile.id)
-            ids = [b.id for b in undoable]
-            self.assertEqual(ids, [b3.id, b2.id, b1.id])
-            store.close()
-
-    def test_get_undoable_batches_filters_by_profile(self):
-        # VERIFIES THAT PROFILE FILTERING WORKS FOR UNDOABLE BATCHES.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            p1 = store.create_profile("Profile 1")
-            p2 = store.create_profile("Profile 2")
-            b1 = store.create_batch(p1.id)
-            b2 = store.create_batch(p2.id)
-            store.mark_batch(b1.id, "COMPLETED")
-            store.mark_batch(b2.id, "COMPLETED")
-            undoable = store.get_undoable_batches(p1.id)
-            self.assertEqual(len(undoable), 1)
-            self.assertEqual(undoable[0].scan_profile_id, p1.id)
-            store.close()
-
-    def test_get_latest_completed_batch(self):
-        # VERIFIES THAT THE MOST RECENT COMPLETED BATCH IS RETURNED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Latest")
-            b1 = store.create_batch(profile.id, "older")
-            b2 = store.create_batch(profile.id, "newer")
-            store.mark_batch(b1.id, "COMPLETED")
-            store.mark_batch(b2.id, "COMPLETED")
-            latest = store.get_latest_completed_batch(profile.id)
-            self.assertIsNotNone(latest)
-            self.assertEqual(latest.id, b2.id)
-            store.close()
-
-    def test_get_latest_completed_batch_returns_none_for_missing(self):
-        # VERIFIES THAT NONE IS RETURNED WHEN NO COMPLETED BATCH EXISTS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("No Batch")
-            result = store.get_latest_completed_batch(profile.id)
-            self.assertIsNone(result)
-            store.close()
-
-
-# STAGE 3: TRANSACTION ENTRY TESTS.
-
-
-class AuditStoreTransactionEntryTests(unittest.TestCase):
-    def test_add_entry_returns_entry_with_id(self):
-        # VERIFIES THAT A NEW ENTRY IS CREATED AND HAS AN INTEGER ID.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Entry Test")
-            batch = store.create_batch(profile.id)
-            entry = store.add_entry(
-                batch.id, None, "move",
-                "/source/file.txt", "/dest/file.txt",
-                source_hash="abc123", source_size=1024,
-            )
-            self.assertIsNotNone(entry.id)
-            self.assertEqual(entry.batch_id, batch.id)
-            self.assertEqual(entry.source_path, "/source/file.txt")
-            self.assertEqual(entry.destination_path, "/dest/file.txt")
-            self.assertEqual(entry.source_hash, "abc123")
-            self.assertEqual(entry.source_size, 1024)
-            self.assertEqual(entry.status, "PENDING")
-            store.close()
-
-    def test_get_entries_by_batch_returns_all(self):
-        # VERIFIES THAT ALL ENTRIES FOR A BATCH ARE RETURNED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Entries All")
-            batch = store.create_batch(profile.id)
-            store.add_entry(batch.id, None, "move", "/a.txt", "/new_a.txt")
-            store.add_entry(batch.id, None, "move", "/b.txt", "/new_b.txt")
-            store.add_entry(batch.id, None, "rename", "/c.txt", "/c_new.txt")
-            entries = store.get_entries_by_batch(batch.id)
-            self.assertEqual(len(entries), 3)
-            store.close()
-
-    def test_get_entries_by_batch_filters_status(self):
-        # VERIFIES THAT STATUS FILTERING WORKS FOR ENTRIES.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Entries Filter")
-            batch = store.create_batch(profile.id)
-            e1 = store.add_entry(batch.id, None, "move", "/a.txt", "/new_a.txt")
-            e2 = store.add_entry(batch.id, None, "move", "/b.txt", "/new_b.txt")
-            store.add_entry(batch.id, None, "move", "/c.txt", "/new_c.txt")
-            store.update_entry(e1.id, status="COMPLETED")
-            store.update_entry(e2.id, status="COMPLETED")
-            pending = store.get_entries_by_batch(batch.id, status="PENDING")
-            completed = store.get_entries_by_batch(batch.id, status="COMPLETED")
-            self.assertEqual(len(pending), 1)
-            self.assertEqual(len(completed), 2)
-            store.close()
-
-    def test_update_entry_modifies_fields(self):
-        # VERIFIES THAT update_entry CHANGES SPECIFIED FIELDS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Update Entry")
-            batch = store.create_batch(profile.id)
-            entry = store.add_entry(batch.id, None, "move", "/a.txt", "/new_a.txt")
-            from datetime import datetime
-            store.update_entry(
-                entry.id,
-                status="completed",
-                holding_path="/holding/a.txt",
-                destination_hash="def456",
-                executed_at=datetime(2026, 1, 1),
-            )
-            updated = store.get_entries_by_batch(batch.id)[0]
-            self.assertEqual(updated.status, "completed")
-            self.assertEqual(updated.holding_path, "/holding/a.txt")
-            self.assertEqual(updated.destination_hash, "def456")
-            self.assertIsNotNone(updated.executed_at)
-            store.close()
-
-    def test_update_entry_returns_false_for_missing(self):
-        # VERIFIES THAT update_entry RETURNS FALSE FOR NONEXISTENT ENTRY.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = store.update_entry(9999, status="completed")
-            self.assertFalse(result)
-            store.close()
-
-    def test_add_entry_with_action_id(self):
-        # VERIFIES THAT AN ENTRY CAN LINK TO A PROPOSED ACTION.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profile = store.create_profile("Link Entry")
-            store.save_proposed_actions(profile.id, [
-                {"original_path": "/file.txt", "proposed_path": "/new.txt", "action_type": "move"},
-            ])
-            action = store.get_proposed_actions(profile.id)[0]
-            batch = store.create_batch(profile.id)
-            entry = store.add_entry(batch.id, action.id, "move", "/file.txt", "/new.txt")
-            self.assertEqual(entry.action_id, action.id)
-            store.close()
-
-
-# STAGE 3: SCHEMA DRIFT MIGRATION TESTS.
-
-
-class EnsureColumnsTests(unittest.TestCase):
-    def test_ensure_columns_adds_missing_columns(self):
-        # VERIFIES THAT _ensure_columns ADDS COLUMNS MISSING FROM AN OLDER DATABASE.
-        from opencoeus.db import ensure_columns
-        from sqlalchemy import create_engine, inspect, text
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "old.sqlite3"
-            engine = create_engine(f"sqlite:///{database_path.as_posix()}")
-            # CREATE A MINIMAL PROPOSED_ACTIONS TABLE WITHOUT THE NEW COLUMNS.
-            with engine.begin() as conn:
-                conn.execute(text("""
-                    CREATE TABLE proposed_actions (
-                        id INTEGER PRIMARY KEY,
-                        scan_profile_id INTEGER NOT NULL,
-                        original_path TEXT NOT NULL,
-                        proposed_path TEXT NOT NULL,
-                        action_type VARCHAR(32) NOT NULL,
-                        rule_id INTEGER,
-                        approved BOOLEAN DEFAULT 0,
-                        applied BOOLEAN DEFAULT 0,
-                        created_at DATETIME
-                    )
-                """))
-            # VERIFY THE MISSING COLUMNS ARE NOT THERE.
-            inspector_before = inspect(engine)
-            cols_before = {col["name"] for col in inspector_before.get_columns("proposed_actions")}
-            self.assertNotIn("reason", cols_before)
-            self.assertNotIn("batch_id", cols_before)
-            engine.dispose()
-            # RECREATE ENGINE AND RUN _ensure_columns (SIMULATES APP STARTUP).
-            engine2 = create_engine(f"sqlite:///{database_path.as_posix()}")
-            ensure_columns(engine2)
-            engine2.dispose()
-            # VERIFY THE COLUMNS WERE ADDED WITH A FRESH ENGINE.
-            engine3 = create_engine(f"sqlite:///{database_path.as_posix()}")
-            inspector_after = inspect(engine3)
-            cols_after = {col["name"] for col in inspector_after.get_columns("proposed_actions")}
-            self.assertIn("reason", cols_after)
-            self.assertIn("batch_id", cols_after)
-            engine3.dispose()
-
-    def test_ensure_columns_is_idempotent(self):
-        # VERIFIES THAT _ensure_columns DOES NOT FAIL WHEN COLUMNS ALREADY EXIST.
-        from opencoeus.db import ensure_columns
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            # RUNNING AGAIN SHOULD NOT RAISE.
-            ensure_columns(store.engine)
-            store.close()
-
-
-class DeleteProfileCascadeTests(unittest.TestCase):
-    def test_delete_cascades_batches_and_entries(self):
-        # VERIFIES THAT DELETING A PROFILE ALSO DELETES ASSOCIATED BATCHES AND ENTRIES.
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "cascade.sqlite3"
-            store = AuditStore(f"sqlite:///{db_path.as_posix()}")
-            profile = store.create_profile("Cascade Delete")
-            batch = store.create_batch(profile.id, "cascade batch")
-            entry = store.add_entry(batch.id, None, "move", "/a.txt", "/b.txt")
-            self.assertGreater(batch.id, 0)
-            self.assertGreater(entry.id, 0)
-            # DELETE THE PROFILE.
-            result = store.delete_profile(profile.id)
-            self.assertTrue(result)
-            # VERIFY BATCHES AND ENTRIES ARE DELETED.
-            from sqlalchemy import select
-            from opencoeus.db import TransactionBatch, TransactionEntry
-            with store.session_factory() as session:
-                remaining_batches = list(session.scalars(
-                    select(TransactionBatch).where(TransactionBatch.scan_profile_id == profile.id)
-                ).all())
-                remaining_entries = list(session.scalars(
-                    select(TransactionEntry).where(TransactionEntry.batch_id == batch.id)
-                ).all())
-                self.assertEqual(len(remaining_batches), 0)
-                self.assertEqual(len(remaining_entries), 0)
-            store.close()
-
-
-if __name__ == "__main__":
-    unittest.main()
+import pytest
+from sqlalchemy import text
+
+from app.core.config import AppConfig
+from app.core.exceptions import DatabaseError
+from app.infrastructure.database import Database
+from app.infrastructure.repositories.settings import (
+    RuleRepository,
+    ScanSessionRepository,
+    SettingsRepository,
+)
+
+
+def test_config_creates_directories_and_derives_paths(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    config = AppConfig(data_dir=data, prefer_transformer=False, enable_llm=False)
+
+    assert config.db_url == f"sqlite:///{data / 'opencoeus.db'}"
+    assert config.db_path == data / "opencoeus.db"
+    assert config.backup_dir == data / "backups"
+    assert config.log_dir == data / "logs"
+
+    config.ensure_directories()
+    assert data.is_dir()
+    assert config.backup_dir.is_dir()
+    assert config.log_dir.is_dir()
+
+
+def test_database_seeds_categories_settings_and_integrity(tmp_path: Path) -> None:
+    db = Database(f"sqlite:///{tmp_path / 'test.db'}")
+    db.create_schema()
+
+    assert db.integrity_check() is True
+
+    repo = SettingsRepository(db)
+    assert repo.get("app.theme") == "dark"
+    assert repo.get_float("search.alpha", 0.0) == pytest.approx(0.4)
+    assert repo.get_bool("app.enable_llm", True) is True
+    assert repo.get("app.enable_llm") is None
+
+    with db.session() as session:
+        from sqlalchemy import func, select
+
+        from app.infrastructure.models import Category, Setting
+
+        categories = session.scalar(select(func.count(Category.id)))
+        settings = session.scalar(select(func.count(Setting.key)))
+
+    assert categories == 23
+    assert settings >= 4
+    db.dispose()
+
+
+def test_fts_upsert_search_and_delete(tmp_path: Path) -> None:
+    db = Database(f"sqlite:///{tmp_path / 'fts.db'}")
+    db.create_schema()
+    with db.session() as session:
+        from app.infrastructure.models import File
+
+        record = File(
+            original_name="invoice.txt",
+            current_name="invoice.txt",
+            original_path="/tmp/invoice.txt",
+            current_path="/tmp/invoice.txt",
+            extension=".txt",
+            file_size=10,
+            processing_status="analysed",
+        )
+        session.add(record)
+        session.flush()
+        file_id = record.id
+
+    db.upsert_fts(file_id, "invoice.txt", "Amount due one thousand", "finance invoice")
+    with db.engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT rowid FROM file_fts WHERE file_fts MATCH 'invoice'")
+        ).all()
+    assert [row[0] for row in rows] == [file_id]
+
+    db.delete_fts(file_id)
+    with db.engine.connect() as connection:
+        remaining = connection.execute(text("SELECT count(*) FROM file_fts")).scalar_one()
+    assert remaining == 0
+    db.dispose()
+
+
+def test_backup_and_restore_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "live.db"
+    db = Database(f"sqlite:///{path}")
+    db.create_schema()
+    settings = SettingsRepository(db)
+    settings.set("app.theme", "light")
+
+    backup = db.backup(tmp_path / "backups" / "copy.db")
+    assert backup.is_file()
+
+    settings.set("app.theme", "dark")
+    assert settings.get("app.theme") == "dark"
+
+    db.restore(backup)
+
+    reopened = Database(f"sqlite:///{path}")
+    assert SettingsRepository(reopened).get("app.theme") == "light"
+    reopened.dispose()
+    db.dispose()
+
+
+def test_in_memory_database_cannot_be_backed_up() -> None:
+    db = Database("sqlite:///:memory:")
+    db.create_schema()
+    with pytest.raises(DatabaseError):
+        db.backup(Path("/tmp/should-not-exist.db"))
+    db.dispose()
+
+
+def test_settings_repository_typed_accessors(tmp_path: Path) -> None:
+    db = Database(f"sqlite:///{tmp_path / 'typed.db'}")
+    db.create_schema()
+    repo = SettingsRepository(db)
+
+    repo.set("example.int", "42")
+    repo.set("example.bool", "yes")
+    repo.set("example.float", "1.5")
+    repo.set("example.broken", "not-a-number")
+
+    assert repo.get_int("example.int", 0) == 42
+    assert repo.get_bool("example.bool", False) is True
+    assert repo.get_float("example.float", 0.0) == pytest.approx(1.5)
+    assert repo.get_int("example.broken", 7) == 7
+    assert repo.get("missing", "fallback") == "fallback"
+    db.dispose()
+
+
+def test_new_categories_are_seeded(context) -> None:
+    descriptions = context.analyses.category_descriptions()
+
+    for path in (
+        "Government/Reports",
+        "Finance/Expenses",
+        "Technical/Source Code",
+        "Technical/Web Pages",
+        "Personal/Calendar",
+    ):
+        assert path in descriptions
+        assert descriptions[path].strip()
+
+
+def test_rule_repository_crud(tmp_path: Path) -> None:
+    db = Database(f"sqlite:///{tmp_path / 'rules.db'}")
+    db.create_schema()
+    rules = RuleRepository(db)
+
+    rule_id = rules.add_rule(
+        name="Invoices from Acme",
+        match_field="content",
+        match_op="contains",
+        match_value="Acme",
+        target_folder="Finance/Invoices",
+    )
+    stored = rules.list_rules()
+    assert [rule["id"] for rule in stored] == [rule_id]
+    assert stored[0]["enabled"] is True
+
+    rules.set_enabled(rule_id, False)
+    assert rules.list_rules(enabled_only=True) == []
+
+    rules.delete_rule(rule_id)
+    assert rules.list_rules() == []
+    db.dispose()
+
+
+def test_scan_session_repository_records_outcome(tmp_path: Path) -> None:
+    db = Database(f"sqlite:///{tmp_path / 'sessions.db'}")
+    db.create_schema()
+    sessions = ScanSessionRepository(db)
+
+    session_id = sessions.start(tmp_path)
+    sessions.finish(session_id, discovered=3, processed=3, failed=0)
+    recent = sessions.recent()
+
+    assert recent[0]["id"] == session_id
+    assert recent[0]["status"] == "completed"
+    assert recent[0]["discovered"] == 3
+    assert recent[0]["finished_at"] is not None
+    db.dispose()

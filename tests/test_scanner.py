@@ -1,133 +1,134 @@
-import tempfile
-import unittest
+"""Recursive scanner and the scanning service."""
+
+from __future__ import annotations
+
+import threading
 from pathlib import Path
 
-from opencoeus.core.file_scan import iter_files
+import pytest
+
+from app.core.exceptions import FileAccessError
+from app.processing.scanner import FileScanner, ScanCancelled, ScanOptions
+from app.services.context import AppContext
 
 
-class ScannerBasicTests(unittest.TestCase):
-    def test_finds_regular_files_in_flat_directory(self):
-        # SETS UP A SIMPLE DIRECTORY WITH TWO FILES AND VERIFIES BOTH ARE FOUND.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            (test_root / "alpha.txt").write_text("hello")
-            (test_root / "beta.bin").write_bytes(b"\x00\x01\x02")
-            discovered_files = list(iter_files(test_root))
-            discovered_names = {record.path.name for record in discovered_files}
-            self.assertEqual(discovered_names, {"alpha.txt", "beta.bin"})
-
-    def test_returns_correct_file_sizes(self):
-        # VERIFIES THAT EACH FILE RECORD CONTAINS THE EXACT BYTE SIZE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            (test_root / "small.txt").write_text("ab")
-            (test_root / "large.bin").write_bytes(b"\xff" * 1000)
-            discovered_files = list(iter_files(test_root))
-            size_by_name = {record.path.name: record.size for record in discovered_files}
-            self.assertEqual(size_by_name["small.txt"], 2)
-            self.assertEqual(size_by_name["large.bin"], 1000)
-
-    def test_recurses_into_subdirectories(self):
-        # VERIFIES THAT FILES IN NESTED SUBDIRECTORIES ARE DISCOVERED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            nested_directory = test_root / "level1" / "level2" / "level3"
-            nested_directory.mkdir(parents=True)
-            (nested_directory / "deep_file.txt").write_text("buried")
-            (test_root / "shallow_file.txt").write_text("surface")
-            discovered_files = list(iter_files(test_root))
-            discovered_names = {record.path.name for record in discovered_files}
-            self.assertEqual(discovered_names, {"deep_file.txt", "shallow_file.txt"})
-
-    def test_skips_symbolic_links(self):
-        # VERIFIES THAT SYMBOLIC LINKS ARE NOT YIELDED AS FILES.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            real_file = test_root / "real.txt"
-            real_file.write_text("actual content")
-            symlink_path = test_root / "link.txt"
-            try:
-                symlink_path.symlink_to(real_file)
-            except OSError:
-                # SOME WINDOWS ENVIRONMENTS REQUIRE ELEVATED PRIVILEGES FOR SYMLINKS.
-                self.skipTest("Symlink creation not supported on this system")
-            discovered_files = list(iter_files(test_root))
-            discovered_names = {record.path.name for record in discovered_files}
-            # ONLY THE REAL FILE SHOULD APPEAR, NOT THE SYMLINK.
-            self.assertIn("real.txt", discovered_names)
-            self.assertNotIn("link.txt", discovered_names)
-
-    def test_empty_directory_yields_nothing(self):
-        # VERIFIES THAT AN EMPTY DIRECTORY PRODUCES ZERO FILE RECORDS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            discovered_files = list(iter_files(test_root))
-            self.assertEqual(discovered_files, [])
-
-    def test_empty_root_directory_yields_nothing(self):
-        # VERIFIES THAT A NONEXISTENT ROOT PRODUCES ZERO RECORDS AND REPORTS AN ERROR.
-        non_existent_path = Path("C:\\nonexistent_folder_12345")
-        errors = []
-        discovered_files = list(iter_files(non_existent_path, errors.append))
-        self.assertEqual(discovered_files, [])
-        self.assertTrue(len(errors) > 0)
-
-    def test_error_callback_reports_unreadable_directories(self):
-        # VERIFIES THAT THE ERROR CALLBACK IS INVOKED WHEN A DIRECTORY CANNOT BE READ.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            readable = test_root / "readable"
-            readable.mkdir()
-            (readable / "file.txt").write_text("content")
-            errors = []
-            discovered_files = list(iter_files(test_root, errors.append))
-            discovered_names = {record.path.name for record in discovered_files}
-            self.assertIn("file.txt", discovered_names)
-
-    def test_skips_broken_symlinks_without_crashing(self):
-        # VERIFIES THAT BROKEN SYMBOLIC LINKS ARE SILENTLY SKIPPED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            (test_root / "real.txt").write_text("content")
-            broken_link = test_root / "broken_link.txt"
-            try:
-                broken_link.symlink_to("C:\\nonexistent_target_12345")
-            except OSError:
-                self.skipTest("Symlink creation not supported on this system")
-            errors = []
-            discovered_files = list(iter_files(test_root, errors.append))
-            # SHOULD FIND THE REAL FILE AND NOT CRASH ON THE BROKEN LINK.
-            discovered_names = {record.path.name for record in discovered_files}
-            self.assertIn("real.txt", discovered_names)
-            self.assertNotIn("broken_link.txt", discovered_names)
-
-    def test_handles_mixed_file_extensions(self):
-        # VERIFIES THAT FILES WITH VARIOUS EXTENSIONS ARE ALL DISCOVERED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            (test_root / "report.txt").write_text("text content")
-            (test_root / "image.png").write_bytes(b"\x89PNG")
-            (test_root / "data.csv").write_text("col1,col2\n1,2")
-            sub_directory = test_root / "subfolder"
-            sub_directory.mkdir()
-            (sub_directory / "nested.txt").write_text("nested content")
-            discovered_files = list(iter_files(test_root))
-            discovered_names = {record.path.name for record in discovered_files}
-            self.assertEqual(discovered_names, {"report.txt", "image.png", "data.csv", "nested.txt"})
-
-    def test_skips_junk_files(self):
-        # VERIFIES THAT APPLEDOUBLE, THUMBS.DB AND DESKTOP.INI FILES ARE NOT DISCOVERED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            test_root = Path(temporary_directory)
-            (test_root / "report.pdf").write_bytes(b"%PDF-1.4")
-            (test_root / "._D4 HATCH COVERS.pdf").write_bytes(b"AppleDouble")
-            (test_root / "Thumbs.db").write_bytes(b"cache")
-            (test_root / "Desktop.ini").write_text("[.ShellClassInfo]")
-            (test_root / ".DS_Store").write_bytes(b"\x00\x01")
-            discovered_files = list(iter_files(test_root))
-            discovered_names = {record.path.name for record in discovered_files}
-            self.assertEqual(discovered_names, {"report.pdf"})
+def _touch(path: Path, content: str = "text") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_scanner_finds_nested_supported_files_and_skips_excluded(tmp_path: Path) -> None:
+    _touch(tmp_path / "a.txt")
+    _touch(tmp_path / "nested" / "b.md")
+    _touch(tmp_path / ".git" / "config")
+    _touch(tmp_path / "node_modules" / "package.json")
+
+    options = ScanOptions(
+        supported_extensions={".txt", ".md"},
+        include_unsupported=False,
+    )
+    found = [item.relative_path.as_posix() for item in FileScanner(options).scan(tmp_path)]
+
+    assert found == ["a.txt", "nested/b.md"]
+
+
+def test_scanner_non_recursive_and_file_limit(tmp_path: Path) -> None:
+    for name in ("one.txt", "two.txt", "three.txt"):
+        _touch(tmp_path / name)
+    _touch(tmp_path / "nested" / "four.txt")
+
+    options = ScanOptions(supported_extensions={".txt"}, recursive=False)
+    assert len(list(FileScanner(options).scan(tmp_path))) == 3
+
+    limited = ScanOptions(supported_extensions={".txt"}, max_files=2)
+    assert len(list(FileScanner(limited).scan(tmp_path))) == 2
+
+
+def test_scanner_can_include_unsupported_files(tmp_path: Path) -> None:
+    _touch(tmp_path / "notes.txt")
+    (tmp_path / "archive.zip").write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+
+    supported = list(
+        FileScanner(
+            ScanOptions(supported_extensions={".txt"}, include_unsupported=False)
+        ).scan(tmp_path)
+    )
+    everything = list(
+        FileScanner(
+            ScanOptions(supported_extensions={".txt"}, include_unsupported=True)
+        ).scan(tmp_path)
+    )
+
+    assert [item.filename for item in supported] == ["notes.txt"]
+    assert {item.filename for item in everything} == {"archive.zip", "notes.txt"}
+    assert next(item for item in everything if item.filename == "archive.zip").supported is False
+
+
+def test_scanner_cancellation(tmp_path: Path) -> None:
+    _touch(tmp_path / "one.txt")
+    event = threading.Event()
+    event.set()
+
+    with pytest.raises(ScanCancelled):
+        list(FileScanner(ScanOptions(supported_extensions={".txt"})).scan(tmp_path, cancel_event=event))
+
+
+def test_scanner_rejects_missing_directory(tmp_path: Path) -> None:
+    with pytest.raises(FileAccessError):
+        list(FileScanner().scan(tmp_path / "missing"))
+
+
+def test_scanning_service_registers_hashes_and_sets_root(
+    context: AppContext, sample_library: Path
+) -> None:
+    report = context.scanning.scan(sample_library)
+
+    assert report.total == 4
+    assert report.created == 4
+    assert report.updated == 0
+    assert report.hashed == 4
+    assert report.failed == 0
+    assert report.cancelled is False
+    assert report.session_id > 0
+    assert context.settings.organisation_root == sample_library.resolve()
+
+    summaries = context.files.list_summaries()
+    assert len(summaries) == 4
+    assert all(summary.status == "discovered" for summary in summaries)
+    assert all(len(summary.path) > 0 for summary in summaries)
+
+    records = [context.files.get_record(summary.id) for summary in summaries]
+    assert all(record is not None and len(str(record["hash"])) == 64 for record in records)
+
+    sessions = context.sessions.recent()
+    assert sessions[0]["status"] == "completed"
+    assert sessions[0]["discovered"] == 4
+
+
+def test_scanning_service_rescan_updates_without_duplicates(
+    context: AppContext, sample_library: Path
+) -> None:
+    first = context.scanning.scan(sample_library)
+    second = context.scanning.scan(sample_library)
+
+    assert first.created == 4
+    assert second.created == 0
+    assert second.updated == 4
+    assert len(context.files.list_summaries()) == 4
+
+
+def test_scanning_service_marks_unsupported_files(
+    context: AppContext, tmp_path: Path
+) -> None:
+    root = tmp_path / "mixed"
+    _touch(root / "notes.txt")
+    (root / "archive.zip").write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+
+    report = context.scanning.scan(root, include_unsupported=True)
+
+    assert report.total == 2
+    assert report.unsupported == 1
+    statuses = context.files.counts()
+    assert statuses["unsupported"] == 1
+    assert statuses["discovered"] == 1

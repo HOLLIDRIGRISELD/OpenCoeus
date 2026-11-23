@@ -1,188 +1,167 @@
-import tempfile
-import unittest
+"""Named scan profiles stay local, persistent and outside the analysis cache key."""
+
+from __future__ import annotations
+
+import os
 from pathlib import Path
 
-from opencoeus.db import AuditStore
-from opencoeus.profiles import (
-    ProfileConfig,
-    create_profile,
-    delete_profile,
-    list_profiles,
-    load_profile,
-    load_profile_by_name,
-    update_profile,
-)
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from app.cli import main
+from app.services.context import AppContext
+from tests.conftest import write_text
 
 
-class CreateProfileTests(unittest.TestCase):
-    def test_create_profile_returns_config_with_id(self):
-        # VERIFIES THAT create_profile RETURNS A ProfileConfig WITH A NON NONE profile_id.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            config = create_profile(store, "Work Files", "/Users/me/Documents")
-            self.assertIsNotNone(config.profile_id)
-            self.assertEqual(config.name, "Work Files")
-            self.assertEqual(config.root_path, "/Users/me/Documents")
-            store.close()
+def test_profile_crud_and_active(context: AppContext) -> None:
+    profile_id = context.profiles.add("Docs", "/docs", ("Invoices",), ("Temp",), ("*.tmp",))
+    assert [p.name for p in context.profiles.list()] == ["Docs"]
 
-    def test_create_profile_default_values(self):
-        # VERIFIES THAT create_profile USES EMPTY LISTS AND document_extraction=True BY DEFAULT.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            config = create_profile(store, "Defaults")
-            self.assertEqual(config.included_folders, [])
-            self.assertEqual(config.excluded_folders, [])
-            self.assertEqual(config.custom_protected_patterns, [])
-            self.assertTrue(config.document_extraction)
-            store.close()
+    context.profiles.set_active(profile_id)
 
-    def test_create_profile_with_custom_folders(self):
-        # VERIFIES THAT create_profile STORES CUSTOM INCLUDED AND EXCLUDED FOLDER LISTS.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            config = create_profile(
-                store, "Custom",
-                included_folders=["/docs", "/images"],
-                excluded_folders=["/temp"],
-            )
-            self.assertEqual(config.included_folders, ["/docs", "/images"])
-            self.assertEqual(config.excluded_folders, ["/temp"])
-            store.close()
+    active = context.profiles.active()
+    assert active is not None
+    assert active.name == "Docs"
+    assert active.included_folders == ("Invoices",)
+    assert active.excluded_folders == ("Temp",)
+    assert active.custom_patterns == ("*.tmp",)
+
+    context.profiles.delete(profile_id)
+
+    assert context.profiles.list() == []
+    assert context.profiles.active() is None
 
 
-class LoadProfileTests(unittest.TestCase):
-    def test_load_profile_returns_config(self):
-        # VERIFIES THAT load_profile RETURNS A ProfileConfig MATCHING THE CREATED PROFILE.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            created = create_profile(store, "Loadable")
-            loaded = load_profile(store, created.profile_id)
-            self.assertIsNotNone(loaded)
-            self.assertEqual(loaded.name, "Loadable")
-            store.close()
+def test_active_profile_survives_purge(context: AppContext) -> None:
+    profile_id = context.profiles.add("Docs", "/docs", (), (), ())
+    context.profiles.set_active(profile_id)
 
-    def test_load_profile_returns_none_for_missing(self):
-        # VERIFIES THAT load_profile RETURNS NONE WHEN THE PROFILE_ID DOES NOT EXIST.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            loaded = load_profile(store, 9999)
-            self.assertIsNone(loaded)
-            store.close()
+    context.db.purge_session_data()
 
-    def test_load_profile_by_name_returns_config(self):
-        # VERIFIES THAT load_profile_by_name RETURNS A ProfileConfig MATCHING THE NAME.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            create_profile(store, "Named Profile")
-            loaded = load_profile_by_name(store, "Named Profile")
-            self.assertIsNotNone(loaded)
-            self.assertEqual(loaded.name, "Named Profile")
-            store.close()
-
-    def test_load_profile_by_name_returns_none_for_missing(self):
-        # VERIFIES THAT load_profile_by_name RETURNS NONE WHEN NO PROFILE MATCHES THE NAME.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            loaded = load_profile_by_name(store, "Ghost")
-            self.assertIsNone(loaded)
-            store.close()
+    active = context.profiles.active()
+    assert active is not None
+    assert active.name == "Docs"
 
 
-class ListProfilesTests(unittest.TestCase):
-    def test_list_profiles_returns_all(self):
-        # VERIFIES THAT list_profiles RETURNS ALL CREATED PROFILES.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            create_profile(store, "Alpha")
-            create_profile(store, "Beta")
-            profiles = list_profiles(store)
-            names = [p.name for p in profiles]
-            self.assertEqual(names, ["Alpha", "Beta"])
-            store.close()
+def test_profile_filters_are_applied_to_scan(context: AppContext, tmp_path: Path) -> None:
+    root = tmp_path / "lib"
+    write_text(root / "skip.tmp", "x")
+    write_text(root / "keep" / "keep.txt", "x")
+    write_text(root / "drop" / "drop.txt", "x")
+    profile_id = context.profiles.add("P", str(root), ("keep",), ("drop",), ("*.tmp",))
+    context.profiles.set_active(profile_id)
 
-    def test_list_profiles_returns_empty_when_none_exist(self):
-        # VERIFIES THAT list_profiles RETURNS AN EMPTY LIST WHEN NO PROFILES EXIST.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            profiles = list_profiles(store)
-            self.assertEqual(profiles, [])
-            store.close()
+    context.scanning.scan(root)
+
+    names = [f.name for f in context.files.list_summaries()]
+    assert "skip.tmp" not in names
+    assert "keep.txt" in names
+    assert "drop.txt" not in names
 
 
-class UpdateProfileTests(unittest.TestCase):
-    def test_update_profile_modifies_fields(self):
-        # VERIFIES THAT update_profile CHANGES SPECIFIED FIELDS AND RETURNS UPDATED CONFIG.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            created = create_profile(store, "Original")
-            updated = update_profile(store, created.profile_id, name="Updated")
-            self.assertEqual(updated.name, "Updated")
-            store.close()
+def test_profile_settings_do_not_change_cache_prefix(context: AppContext) -> None:
+    before = context.analysis._cache_signature(use_llm=False)
 
-    def test_update_profile_serializes_lists(self):
-        # VERIFIES THAT LIST FIELDS ARE PROPERLY SERIALIZED WHEN UPDATED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            created = create_profile(store, "Lists")
-            updated = update_profile(store, created.profile_id, included_folders=["/a", "/b"])
-            self.assertEqual(updated.included_folders, ["/a", "/b"])
-            store.close()
+    profile_id = context.profiles.add("P", "/docs", ("Invoices",), ("Temp",), ("*.tmp",))
+    context.profiles.set_active(profile_id)
 
-    def test_update_profile_returns_none_for_missing(self):
-        # VERIFIES THAT update_profile RETURNS NONE WHEN THE PROFILE DOES NOT EXIST.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = update_profile(store, 9999, name="Nope")
-            self.assertIsNone(result)
-            store.close()
+    assert context.analysis._cache_signature(use_llm=False) == before
 
 
-class DeleteProfileTests(unittest.TestCase):
-    def test_delete_profile_returns_true(self):
-        # VERIFIES THAT delete_profile RETURNS TRUE AND THE PROFILE CAN NO LONGER BE LOADED.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            created = create_profile(store, "Delete Me")
-            result = delete_profile(store, created.profile_id)
-            self.assertTrue(result)
-            self.assertIsNone(load_profile(store, created.profile_id))
-            store.close()
+def test_cli_profile_commands_add_list_apply_and_delete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "data"
+    root = tmp_path / "lib"
+    root.mkdir()
 
-    def test_delete_profile_returns_false_for_missing(self):
-        # VERIFIES THAT delete_profile RETURNS FALSE WHEN THE PROFILE DOES NOT EXIST.
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            database_path = Path(temporary_directory) / "test.sqlite3"
-            store = AuditStore(f"sqlite:///{database_path.as_posix()}")
-            result = delete_profile(store, 9999)
-            self.assertFalse(result)
-            store.close()
+    assert main(["--data-dir", str(data_dir), "profile", "add", "Docs", str(root)]) == 0
+    assert main(["--data-dir", str(data_dir), "profile", "list"]) == 0
+    assert "Docs" in capsys.readouterr().out
+    assert main(["--data-dir", str(data_dir), "profile", "apply", "Docs"]) == 0
 
+    ctx = AppContext.create(data_dir=data_dir, purge=False)
+    try:
+        active = ctx.profiles.active()
+        assert active is not None
+        assert active.name == "Docs"
+    finally:
+        ctx.close()
 
-class ProfileConfigTests(unittest.TestCase):
-    def test_profile_config_is_dataclass(self):
-        # VERIFIES THAT ProfileConfig IS A DATACLASS WITH THE EXPECTED FIELDS.
-        config = ProfileConfig()
-        self.assertIsNone(config.profile_id)
-        self.assertEqual(config.name, "")
-        self.assertEqual(config.root_path, "")
-        self.assertEqual(config.included_folders, [])
-        self.assertEqual(config.excluded_folders, [])
-        self.assertEqual(config.custom_protected_patterns, [])
-        self.assertTrue(config.document_extraction)
+    assert main(["--data-dir", str(data_dir), "profile", "delete", "Docs", "--yes"]) == 0
+    ctx = AppContext.create(data_dir=data_dir, purge=False)
+    try:
+        assert ctx.profiles.list() == []
+        assert ctx.profiles.active() is None
+    finally:
+        ctx.close()
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_cli_scan_uses_active_profile_root_without_positional_path(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    root = tmp_path / "lib"
+    write_text(root / "Invoice.txt", "INVOICE 123")
+
+    assert main(["--data-dir", str(data_dir), "profile", "add", "Docs", str(root)]) == 0
+    assert main(["--data-dir", str(data_dir), "profile", "apply", "Docs"]) == 0
+    assert main(["--data-dir", str(data_dir), "scan", "--no-hash"]) == 0
+
+    ctx = AppContext.create(data_dir=data_dir, purge=False)
+    try:
+        assert [f.name for f in ctx.files.list_summaries()] == ["Invoice.txt"]
+    finally:
+        ctx.close()
+
+
+def test_cli_scan_profile_option_overrides_active_profile(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    root = tmp_path / "lib"
+    write_text(root / "first" / "first.txt", "x")
+    write_text(root / "second" / "second.txt", "x")
+
+    assert main(
+        [
+            "--data-dir", str(data_dir), "profile", "add", "First", str(root),
+            "--include", "first",
+        ]
+    ) == 0
+    assert main(
+        [
+            "--data-dir", str(data_dir), "profile", "add", "Second", str(root),
+            "--include", "second",
+        ]
+    ) == 0
+    assert main(["--data-dir", str(data_dir), "profile", "apply", "First"]) == 0
+    assert main(
+        ["--data-dir", str(data_dir), "scan", "--profile", "Second", "--no-hash", str(root)]
+    ) == 0
+
+    ctx = AppContext.create(data_dir=data_dir, purge=False)
+    try:
+        names = [f.name for f in ctx.files.list_summaries()]
+        assert "second.txt" in names
+        assert "first.txt" not in names
+    finally:
+        ctx.close()
+
+
+def test_files_page_shows_active_profile_summary(context: AppContext) -> None:
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.pages.files import FilesPage
+
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+    profile_id = context.profiles.add("Docs", "/docs", ("Invoices",), (), ("*.tmp",))
+    context.profiles.set_active(profile_id)
+
+    page = FilesPage(context)
+    try:
+        text = page.profile_label.text()
+        assert "Docs" in text
+        assert "Invoices" in text
+        assert "*.tmp" in text
+    finally:
+        page.deleteLater()
