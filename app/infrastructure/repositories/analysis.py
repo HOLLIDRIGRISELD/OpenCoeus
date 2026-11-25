@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import numpy as np
 from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.constants import (
     STATUS_ANALYSED,
@@ -44,7 +45,6 @@ from app.infrastructure.repositories._helpers import category_path_map
 IDF_CORPUS_MAX_TEXTS = 2000
 IDF_CORPUS_CHARS_PER_TEXT = 2000
 IDF_CORPUS_MAX_CHARS = 4_000_000
-EMBEDDING_SCAN_MAX_ROWS = 20_000
 
 
 def limit_embedding_corpus(
@@ -84,20 +84,22 @@ class AnalysisRepository:
         with self._db.session() as session:
             parent_id: int | None = None
             for index, name in enumerate(parts):
+                session.execute(
+                    sqlite_insert(Category)
+                    .values(
+                        name=name,
+                        parent_id=parent_id,
+                        description=description if index == len(parts) - 1 else None,
+                        created_at=utcnow(),
+                    )
+                    .on_conflict_do_nothing()
+                )
                 node = session.scalar(
                     select(Category).where(
                         Category.name == name,
                         Category.parent_id == parent_id if parent_id is not None else Category.parent_id.is_(None),
                     )
                 )
-                if node is None:
-                    node = Category(
-                        name=name,
-                        parent_id=parent_id,
-                        description=description if index == len(parts) - 1 else None,
-                    )
-                    session.add(node)
-                    session.flush()
                 parent_id = node.id
             return parent_id or 0
 
@@ -452,6 +454,30 @@ class AnalysisRepository:
                 for suggestion, file in rows
             ]
 
+    def pending_suggestion_count(self) -> int:
+        """Count the same latest filename suggestions as :meth:`pending_suggestions`."""
+
+        with self._db.session() as session:
+            latest = (
+                select(
+                    Suggestion.file_id.label("file_id"),
+                    func.max(Suggestion.id).label("suggestion_id"),
+                )
+                .where(
+                    Suggestion.suggestion_type == "filename",
+                    Suggestion.status.in_(["pending", "accepted"]),
+                )
+                .group_by(Suggestion.file_id)
+                .subquery()
+            )
+            total = session.scalar(
+                select(func.count())
+                .select_from(Suggestion)
+                .join(latest, latest.c.suggestion_id == Suggestion.id)
+                .where(Suggestion.status.in_(["pending", "accepted"]))
+            )
+            return int(total or 0)
+
     @staticmethod
     def _destination_map(session, file_ids: list[int]) -> dict[int, str]:  # type: ignore[no-untyped-def]
         if not file_ids:
@@ -728,13 +754,13 @@ class AnalysisRepository:
 
             known: dict[str, int] = {}
             if cleaned:
+                session.execute(
+                    sqlite_insert(Tag)
+                    .values([{"name": name} for name in cleaned])
+                    .on_conflict_do_nothing()
+                )
                 rows = session.execute(select(Tag.id, Tag.name).where(Tag.name.in_(cleaned))).all()
                 known = {name: tag_id for tag_id, name in rows}
-                missing = [name for name in cleaned if name not in known]
-                if missing:
-                    session.execute(insert(Tag), [{"name": name} for name in missing])
-                    rows = session.execute(select(Tag.id, Tag.name).where(Tag.name.in_(cleaned))).all()
-                    known = {name: tag_id for tag_id, name in rows}
 
             present = set(session.execute(
                 select(FileTag.tag_id).where(FileTag.file_id == file_id)
@@ -971,10 +997,8 @@ class AnalysisRepository:
         norm = float(np.linalg.norm(mean))
         return mean / norm if norm > 0 else None
 
-    def load_embeddings(
-        self, model_name: str, *, limit: int = EMBEDDING_SCAN_MAX_ROWS
-    ) -> list[tuple[int, np.ndarray, str]]:
-        """Return a bounded ``(file_id, vector, chunk_text)`` sample for a model."""
+    def iter_embeddings(self, model_name: str) -> Iterator[tuple[int, np.ndarray, str]]:
+        """Stream every ``(file_id, vector, chunk_text)`` row for a model."""
 
         with self._db.session() as session:
             rows = session.execute(
@@ -982,26 +1006,26 @@ class AnalysisRepository:
                 .join(DocumentChunkRecord, DocumentChunkRecord.id == EmbeddingBlob.chunk_id)
                 .where(EmbeddingBlob.model_name == model_name)
                 .order_by(EmbeddingBlob.file_id, EmbeddingBlob.chunk_id)
-                .limit(limit)
             ).yield_per(1000)
-            result = [
-                (file_id, np.frombuffer(vector, dtype="<f8"), text or "")
-                for file_id, vector, text in rows
-            ]
-            blob_files = {file_id for file_id, _, _ in result}
+            blob_files: set[int] = set()
+            for file_id, vector, text in rows:
+                blob_files.add(file_id)
+                yield file_id, np.frombuffer(vector, dtype="<f8"), text or ""
+
             legacy = session.execute(
                 select(Embedding.file_id, Embedding.vector, DocumentChunkRecord.text)
                 .join(DocumentChunkRecord, DocumentChunkRecord.id == Embedding.chunk_id)
                 .where(Embedding.model_name == model_name)
                 .order_by(Embedding.file_id, Embedding.chunk_id)
-                .limit(limit)
             ).yield_per(1000)
-            result.extend(
-                (file_id, np.asarray(vector, dtype=np.float32), text or "")
-                for file_id, vector, text in legacy
-                if file_id not in blob_files
-            )
-            return sorted(result, key=lambda row: row[0])
+            for file_id, vector, text in legacy:
+                if file_id not in blob_files:
+                    yield file_id, np.asarray(vector, dtype=np.float32), text or ""
+
+    def load_embeddings(self, model_name: str) -> list[tuple[int, np.ndarray, str]]:
+        """Return all stored chunk vectors for a model."""
+
+        return sorted(self.iter_embeddings(model_name), key=lambda row: row[0])
 
     def delete_embeddings(self, file_id: int, model_name: str | None = None) -> None:
         with self._db.session() as session:

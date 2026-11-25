@@ -124,6 +124,9 @@ class RecommendationService:
 
         return self._analyses.pending_suggestions(limit=limit)
 
+    def pending_count(self) -> int:
+        return self._analyses.pending_suggestion_count()
+
     def detail(self, file_id: int) -> RecommendationDetail | None:
         record = self._files.get_record(file_id)
         if record is None:

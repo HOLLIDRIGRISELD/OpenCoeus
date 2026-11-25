@@ -62,6 +62,16 @@ def test_chunk_text_caps_the_number_of_chunks() -> None:
     assert len(chunks) == 96
 
 
+def test_chunk_text_samples_the_tail_of_a_very_long_document() -> None:
+    paragraphs = [f"SECTION {index}: " + ("word " * 200) for index in range(500)]
+
+    chunks = chunk_text("\n\n".join(paragraphs))
+
+    assert len(chunks) == 96
+    assert "SECTION 0" in chunks[0].text
+    assert "SECTION 499" in chunks[-1].text
+
+
 def test_chunk_text_splits_a_single_huge_paragraph() -> None:
     text = ("This is a sentence. " * 500).strip()
     chunks = chunk_text(text, ChunkingConfig(target_chars=500, overlap_chars=0))

@@ -164,7 +164,6 @@ class _StubLLM:
             organisation="Acme Systems Ltd",
             document_date="2024-05-01",
             confidence=0.91,
-            evidence=["The document text supports these fields."],
         )
 
 

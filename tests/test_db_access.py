@@ -132,6 +132,120 @@ def test_fts_rebuild_preserves_raw_columns(
     assert rows() == before
 
 
+def test_concurrent_file_upsert_keeps_one_row_per_path(
+    context: AppContext, tmp_path: Path
+) -> None:
+    from datetime import UTC, datetime
+
+    from app.domain.models import ScannedFile
+
+    path = tmp_path / "shared.txt"
+    scanned = ScannedFile(
+        path=path,
+        relative_path=Path("shared.txt"),
+        filename="shared.txt",
+        extension=".txt",
+        size=12,
+        modified_at=datetime.now(UTC),
+    )
+
+    with context.db.engine.connect() as rival:
+        raced = False
+
+        def insert_rival(_conn, _cursor, statement, _params, _ctx, _many) -> None:
+            nonlocal raced
+            if not raced and statement.lstrip().upper().startswith("INSERT INTO FILES"):
+                raced = True
+                rival.execute(
+                    text(
+                        "INSERT INTO files (id, original_name, current_name, original_path, "
+                        "current_path, extension, file_size, processing_status, is_available, "
+                        "created_record_at, updated_record_at) "
+                        "VALUES (7001, 'shared.txt', 'shared.txt', :path, :path, '.txt', 12, "
+                        "'discovered', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                    ),
+                    {"path": str(path)},
+                )
+                rival.commit()
+
+        event.listen(context.db.engine, "before_cursor_execute", insert_rival)
+        try:
+            file_id, _created = context.files.upsert(scanned)
+        finally:
+            event.remove(context.db.engine, "before_cursor_execute", insert_rival)
+
+    with context.db.engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT id FROM files WHERE current_path = :path"), {"path": str(path)}
+        ).scalars().all()
+    assert raced
+    assert list(rows) == [file_id]
+
+
+def test_ensure_category_survives_a_concurrent_insert(context: AppContext) -> None:
+    with context.db.engine.connect() as rival:
+        raced = False
+
+        def insert_rival(_conn, _cursor, statement, _params, _ctx, _many) -> None:
+            nonlocal raced
+            if not raced and statement.lstrip().upper().startswith("INSERT INTO CATEGORIES"):
+                raced = True
+                rival.execute(
+                    text(
+                        "INSERT INTO categories (name, is_system, created_at) "
+                        "VALUES ('RaceRoot', 0, CURRENT_TIMESTAMP)"
+                    )
+                )
+                rival.commit()
+
+        event.listen(context.db.engine, "before_cursor_execute", insert_rival)
+        try:
+            category_id = context.analyses.ensure_category("RaceRoot")
+        finally:
+            event.remove(context.db.engine, "before_cursor_execute", insert_rival)
+
+    with context.db.engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT id FROM categories WHERE name = 'RaceRoot'")
+        ).scalars().all()
+    assert raced
+    assert list(rows) == [category_id]
+
+
+def test_set_tags_survives_a_concurrent_insert(context: AppContext, tmp_path: Path) -> None:
+    path = write_text(tmp_path / "library" / "one.txt", "tagged content")
+    context.scanning.scan(path.parent)
+    file_id = context.files.find_by_path(path)
+    assert file_id is not None
+
+    with context.db.engine.connect() as rival:
+        raced = False
+
+        def insert_rival(_conn, _cursor, statement, _params, _ctx, _many) -> None:
+            nonlocal raced
+            if not raced and statement.lstrip().upper().startswith("INSERT INTO TAGS"):
+                raced = True
+                rival.execute(text("INSERT INTO tags (name) VALUES ('race-tag')"))
+                rival.commit()
+
+        event.listen(context.db.engine, "before_cursor_execute", insert_rival)
+        try:
+            context.analyses.set_tags(file_id, ["race-tag"])
+        finally:
+            event.remove(context.db.engine, "before_cursor_execute", insert_rival)
+
+    with context.db.engine.connect() as connection:
+        tag_ids = connection.execute(
+            text("SELECT id FROM tags WHERE name = 'race-tag'")
+        ).scalars().all()
+        linked = connection.execute(
+            text("SELECT tag_id FROM file_tags WHERE file_id = :file_id"), {"file_id": file_id}
+        ).scalars().all()
+    assert raced
+    assert len(tag_ids) == 1
+    assert list(linked) == list(tag_ids)
+
+
 def _bootstrap_worker(path: Path, ready, start, errors) -> None:  # type: ignore[no-untyped-def]
     from app.infrastructure.database import Database
 

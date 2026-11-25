@@ -12,6 +12,7 @@ from app.domain.models import ExtractionResult
 from app.processing.extractors.base import MAX_TEXT_CHARS, BaseExtractor
 
 _ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+_UTF16_BOMS = (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
 _READ_CHUNK_BYTES = 1 << 20
 _READ_TARGET_CHARS = MAX_TEXT_CHARS + 4096
 _MARKUP_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
@@ -48,20 +49,24 @@ def _decode_limited(path: Path) -> tuple[str, str, bool]:
             if not chunk:
                 break
             if first_chunk:
-                if b"\x00" in chunk[:4096]:
-                    raise ExtractionError(f"{path.name} appears to be binary, not text.")
-                for encoding in _ENCODINGS:
-                    try:
-                        codecs.getincrementaldecoder(encoding)().decode(chunk, final=False)
-                        decoder = codecs.getincrementaldecoder(encoding)()
-                        used_encoding = encoding
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                if decoder is None:
-                    decoder = codecs.getincrementaldecoder("utf-8")("replace")
-                    used_encoding = "utf-8 (replaced)"
-                    replaced = True
+                if chunk.startswith(_UTF16_BOMS):
+                    used_encoding = "utf-16"
+                    decoder = codecs.getincrementaldecoder(used_encoding)()
+                else:
+                    if b"\x00" in chunk[:4096]:
+                        raise ExtractionError(f"{path.name} appears to be binary, not text.")
+                    for encoding in _ENCODINGS:
+                        try:
+                            codecs.getincrementaldecoder(encoding)().decode(chunk, final=False)
+                            decoder = codecs.getincrementaldecoder(encoding)()
+                            used_encoding = encoding
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    if decoder is None:
+                        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+                        used_encoding = "utf-8 (replaced)"
+                        replaced = True
                 first_chunk = False
             try:
                 decoded = decoder.decode(chunk, final=False)

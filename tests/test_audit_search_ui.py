@@ -35,7 +35,7 @@ def _listen_for_sql(engine, needle: str, statements: list[str]):
     return before_cursor_execute
 
 
-def test_load_embeddings_uses_bounded_query(context: AppContext, analysed_library: Path) -> None:
+def test_load_embeddings_reads_every_stored_chunk(context: AppContext, analysed_library: Path) -> None:
     statements: list[str] = []
     engine = context.db.engine
     listener = _listen_for_sql(engine, "embedding_blobs", statements)
@@ -44,7 +44,7 @@ def test_load_embeddings_uses_bounded_query(context: AppContext, analysed_librar
 
     event.remove(engine, "before_cursor_execute", listener)
     assert statements
-    assert any("limit" in statement for statement in statements)
+    assert not any("limit" in statement for statement in statements)
     assert rows
 
 

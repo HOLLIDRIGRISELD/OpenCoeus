@@ -7,14 +7,17 @@ import os
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from app.core.constants import STATUS_ORGANISED
 from app.core.exceptions import OperationConflictError, RecoveryError
 from app.domain.enums import ActionType
 from app.domain.models import PlannedAction
 from app.organisation import fsops
+from app.organisation.executor import move_no_overwrite as executor_move
 from app.organisation.fsops import move_no_overwrite, reserve_path
 from app.organisation.planner import OrganisationPlanner, PlanEntry
+from app.processing.hashing import sha256_file
 from app.services.context import AppContext
 from tests.conftest import file_id_for
 
@@ -395,6 +398,51 @@ def test_failed_rollback_reports_where_the_file_stayed(
     assert len(report.failed) == 1
     assert str(destination) in report.failed[0].message
     assert destination.exists()
+
+def test_rollback_leaves_foreign_destination_content_in_place(
+    context: AppContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "library"
+    source = _write(root / "a.txt", "original content")
+    context.scanning.scan(root)
+    destination = root / "Alpha.txt"
+    action = PlannedAction(
+        file_id=file_id_for(context, source),
+        action=ActionType.RENAME,
+        source_path=source,
+        destination_path=destination,
+        original_name="a.txt",
+        new_name="Alpha.txt",
+        confidence=0.9,
+        expected_hash=sha256_file(source),
+    )
+
+    calls = {"count": 0}
+
+    def hijacked_move(src: Path, dst: Path, **kwargs: object) -> None:
+        executor_move(src, dst, **kwargs)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            Path(dst).write_text("foreign content", encoding="utf-8")
+            raise OSError("injected failure after move")
+
+    monkeypatch.setattr("app.organisation.executor.move_no_overwrite", hijacked_move)
+
+    report = context.executor.execute(root, [action])
+
+    assert len(report.failed) == 1
+    assert destination.read_text(encoding="utf-8") == "foreign content"
+    assert not source.exists()
+    with context.db.engine.connect() as connection:
+        details = connection.execute(
+            text(
+                "SELECT detail FROM operation_events "
+                "WHERE operation_id = :operation_id AND event_type = 'rollback_failed'"
+            ),
+            {"operation_id": report.failed[0].operation_id},
+        ).scalars().all()
+    assert details and "hash" in str(details[0]).lower()
+
 
 def test_undo_refuses_when_original_location_is_occupied(
     context: AppContext, tmp_path: Path

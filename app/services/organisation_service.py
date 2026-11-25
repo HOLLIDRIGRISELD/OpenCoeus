@@ -25,6 +25,7 @@ from app.core.constants import (
 )
 from app.core.exceptions import InvalidRecommendationError, OperationConflictError
 from app.core.logging_config import get_logger
+from app.core.process_lock import DATA_LOCK_NAME, ProcessLock
 from app.core.progress import (
     CancellationToken,
     OperationCancelled,
@@ -104,6 +105,7 @@ class OrganisationService:
         self._indexer = indexer
         self._batches = batches
         self._holding_root = holding_root
+        self._lock = ProcessLock(holding_root.parent / DATA_LOCK_NAME)
 
     def organisation_root(self) -> Path:
         """Return the root that relative suggestions are resolved against.
@@ -267,6 +269,22 @@ class OrganisationService:
             require_approval: When True (the default) a draft plan is refused.
         """
 
+        with self._lock.locked():
+            return self._execute_unlocked(
+                plan_id,
+                progress=progress,
+                cancel=cancel,
+                require_approval=require_approval,
+            )
+
+    def _execute_unlocked(
+        self,
+        plan_id: int,
+        *,
+        progress: ProgressCallback | None,
+        cancel: CancellationToken | None,
+        require_approval: bool,
+    ) -> ExecutionReport:
         plan = self._operations.get_plan(plan_id)
         if plan is None:
             raise InvalidRecommendationError(f"Plan {plan_id} was not found.")
@@ -454,12 +472,13 @@ class OrganisationService:
     ) -> BatchResult:
         """Execute a plan through a holding area with whole-batch rollback."""
 
-        if not _BATCH_LOCK.acquire(blocking=False):
-            raise OperationConflictError("A batch execution is already running.")
-        try:
-            return self._execute_batch(plan_id, progress=progress, cancel=cancel)
-        finally:
-            _BATCH_LOCK.release()
+        with self._lock.locked():
+            if not _BATCH_LOCK.acquire(blocking=False):
+                raise OperationConflictError("A batch execution is already running.")
+            try:
+                return self._execute_batch(plan_id, progress=progress, cancel=cancel)
+            finally:
+                _BATCH_LOCK.release()
 
     def _execute_batch(
         self,
@@ -488,45 +507,71 @@ class OrganisationService:
             )
         if status != PlanStatus.APPROVED.value:
             raise InvalidRecommendationError("Approve the plan before executing it.")
-        if not self._operations.claim_plan(plan_id):
-            raise InvalidRecommendationError(
-                f"Plan {plan_id} was claimed by another run. Revalidate it before retrying."
-            )
 
+        root = Path(str(plan["root_path"]))
         plan_items = self._operations.plan_items(plan_id)
-        self._validate_plan_paths(plan_id, plan_items, Path(str(plan["root_path"])))
+        self._validate_plan_paths(plan_id, plan_items, root)
+        held_sources = self._batches.held_sources(plan_id)
+        conflicts = self._recompute_conflicts(plan_items, root, held_sources)
         items = [
             item
             for item in plan_items
-            if item.conflict is None and item.status != "completed"
+            if conflicts[item.id] is None and item.status != "completed"
         ]
-        held_sources = self._batches.held_sources(plan_id)
-        batch_id = self._batches.create(plan_id, self._holding_root)
-        holding_dir = self._holding_root / f"batch-{batch_id}"
+        items_by_id = {item.id: item for item in items}
+        actions = order_vacating_first(
+            [
+                PlannedAction(
+                    file_id=item.file_id,
+                    action=_action(item.action),
+                    source_path=Path(item.source_path),
+                    destination_path=Path(item.destination_path),
+                    original_name=Path(item.source_path).name,
+                    new_name=Path(item.destination_path).name,
+                    confidence=item.confidence,
+                    plan_item_id=item.id,
+                )
+                for item in items
+            ]
+        )
+        items = [
+            items_by_id[action.plan_item_id]
+            for action in actions
+            if action.plan_item_id in items_by_id and action.conflict is None
+        ]
         if not items:
+            batch_id = self._batches.create(plan_id, self._holding_root)
             self._batches.set_state(batch_id, COMPLETED)
             self._operations.update_plan_status(plan_id, PlanStatus.COMPLETED)
             return BatchResult(COMPLETED)
 
-        self._batches.set_state(batch_id, PENDING)
         records = self._files.light_records([item.file_id for item in items])
+        for item in items:
+            source = held_sources.get(item.file_id, Path(item.source_path))
+            record = records.get(item.file_id, {})
+            size = record.get("size")
+            expected = record.get("hash")
+            if not source.is_file() or (
+                isinstance(size, int) and source.stat().st_size != size
+            ) or (expected and sha256_file(source) != expected):
+                raise OSError(f"Source changed since it was scanned: {source}")
+
+        if not self._operations.claim_plan(plan_id):
+            raise InvalidRecommendationError(
+                f"Plan {plan_id} was claimed by another run. Revalidate it before retrying."
+            )
+        batch_id = self._batches.create(plan_id, self._holding_root)
+        holding_dir = self._holding_root / f"batch-{batch_id}"
+        self._batches.set_state(batch_id, PENDING)
         plan_item_ids = {item.file_id: item.id for item in items}
         completed: list[int] = []
         failed: list[int] = []
         operation_ids: list[int] = []
+        operation_hashes: dict[int, str | None] = {}
+        operation_ids_by_file: dict[int, int] = {}
         final_state = COMPLETED
 
         try:
-            for item in items:
-                source = held_sources.get(item.file_id, Path(item.source_path))
-                record = records.get(item.file_id, {})
-                size = record.get("size")
-                expected = record.get("hash")
-                if not source.is_file() or (
-                    isinstance(size, int) and source.stat().st_size != size
-                ) or (expected and sha256_file(source) != expected):
-                    raise OSError(f"Source changed since it was scanned: {source}")
-
             for index, item in enumerate(items, start=1):
                 if cancel is not None:
                     cancel.raise_if_cancelled()
@@ -556,9 +601,11 @@ class OrganisationService:
                     plan_item_id=item.id,
                 )
                 operation_ids.append(operation_id)
+                operation_hashes[item.file_id] = expected
+                operation_ids_by_file[item.file_id] = operation_id
                 try:
-                    move_no_overwrite(source, holding, expected_hash=expected)
                     self._batches.record_item(batch_id, item.file_id, original, holding, final)
+                    move_no_overwrite(source, holding, expected_hash=expected)
                     self._batches.set_item_state(batch_id, item.file_id, HELD)
                     self._batches.set_state(batch_id, HELD)
                     ok, reason = verify_destination(holding, expected_hash=expected)
@@ -608,6 +655,16 @@ class OrganisationService:
                     continue
                 if not source.is_file():
                     continue
+                expected_hash = operation_hashes.get(record.file_id)
+                if expected_hash:
+                    ok, reason = verify_destination(source, expected_hash=expected_hash)
+                    if not ok:
+                        detail = f"Batch {batch_id} left {source} in place: {reason}"
+                        logger.error(detail)
+                        operation_id = operation_ids_by_file.get(record.file_id)
+                        if operation_id is not None:
+                            self._operations.add_event(operation_id, "rollback_failed", detail)
+                        continue
                 if record.original_path.exists():
                     logger.warning(
                         "Batch %s left %s in the holding area: original path is occupied",
@@ -656,15 +713,22 @@ class OrganisationService:
             InvalidRecommendationError: If the plan cannot be revalidated.
         """
 
+        with self._lock.locked():
+            return self._revalidate_unlocked(plan_id)
+
+    def _revalidate_unlocked(self, plan_id: int) -> PlanSummary:
         plan = self._operations.get_plan(plan_id)
         if plan is None:
             raise InvalidRecommendationError(f"Plan {plan_id} was not found.")
         status = str(plan["status"])
         if status == PlanStatus.COMPLETED.value:
             raise InvalidRecommendationError("A completed plan cannot be revalidated.")
+        if status == PlanStatus.EXECUTING.value:
+            raise InvalidRecommendationError(
+                "An EXECUTING plan cannot be revalidated. Restart OpenCoeus if it was interrupted."
+            )
         if status not in {
             PlanStatus.APPROVED.value,
-            PlanStatus.EXECUTING.value,
             PlanStatus.FAILED.value,
             PlanStatus.PARTIALLY_COMPLETED.value,
             PlanStatus.REVALIDATION_REQUIRED.value,

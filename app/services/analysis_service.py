@@ -41,7 +41,7 @@ from app.core.exceptions import (
     UnsupportedFormatError,
 )
 from app.core.logging_config import get_logger
-from app.core.progress import CancellationToken, ProgressCallback, emit
+from app.core.progress import CancellationToken, OperationCancelled, ProgressCallback, emit
 from app.domain.models import (
     ClassificationResult,
     DocumentChunk,
@@ -210,27 +210,29 @@ class AnalysisService:
                 STATUS_PENDING_REVIEW,
             ]
 
-        with self._db.batch():
-            file_ids = self._files.ids_by_status(statuses, limit=limit)
-            report.total = len(file_ids)
-            if not file_ids:
-                report.duration_seconds = round(time.perf_counter() - started, 3)
-                return report
+        file_ids = self._files.ids_by_status(statuses, limit=limit)
+        report.total = len(file_ids)
+        if not file_ids:
+            report.duration_seconds = round(time.perf_counter() - started, 3)
+            return report
 
-            manual_names = self._analyses.accepted_filenames(file_ids)
-            folder_cache: dict[Path, set[Path]] = {}
-            name_cache: dict[Path, set[str]] = {}
-            reserved_names: set[str] = set()
-            records = self._files.light_records(file_ids)
-            cache_keys = self._analysis_cache.all_keys() if self._analysis_cache is not None else set()
-            duplicate_sources = self._files.find_analysed_duplicates(
-                file_ids,
-                {file_id: str(record.get("hash") or "") for file_id, record in records.items()},
-            )
-            batch_settings = self._batch_settings()
-            cache_signature = batch_settings.cache_signature(use_llm, self._analysis_cache is not None)
-            category_map = self._analyses.category_map()
-            category_paths = sorted(category_map.values())
+        original_statuses = self._files.statuses_for_ids(file_ids)
+        claimed_ids = self._files.claim_ids(file_ids, statuses)
+        started_ids: set[int] = set()
+        manual_names = self._analyses.accepted_filenames(file_ids)
+        folder_cache: dict[Path, set[Path]] = {}
+        name_cache: dict[Path, set[str]] = {}
+        reserved_names: set[str] = set()
+        records = self._files.light_records(file_ids)
+        cache_keys = self._analysis_cache.all_keys() if self._analysis_cache is not None else set()
+        duplicate_sources = self._files.find_analysed_duplicates(
+            file_ids,
+            {file_id: str(record.get("hash") or "") for file_id, record in records.items()},
+        )
+        batch_settings = self._batch_settings()
+        cache_signature = batch_settings.cache_signature(use_llm, self._analysis_cache is not None)
+        category_map = self._analyses.category_map()
+        category_paths = sorted(category_map.values())
         queue: deque[tuple[int, Future[PreparedExtraction] | None, int]] = deque()
         seen_hashes: set[str] = set()
         duplicate_candidates: set[int] = set()
@@ -239,6 +241,17 @@ class AnalysisService:
             file_id, future, index = entry
             if cancel is not None:
                 cancel.raise_if_cancelled()
+            if file_id not in claimed_ids:
+                report.skipped += 1
+                emit(
+                    progress,
+                    "analyse",
+                    index,
+                    len(file_ids),
+                    f"Analysed {index} of {len(file_ids)}",
+                )
+                return
+            started_ids.add(file_id)
             prepared: PreparedExtraction | None = None
             try:
                 if future is not None:
@@ -293,37 +306,47 @@ class AnalysisService:
                 outcome.category_path,
             )
 
-        with ThreadPoolExecutor(max_workers=EXTRACTION_WORKERS) as executor:
-            for index, file_id in enumerate(file_ids, start=1):
-                if cancel is not None:
-                    cancel.raise_if_cancelled()
-                emit(
-                    progress,
-                    "analyse",
-                    index - 1,
-                    len(file_ids),
-                    f"Analysing {index} of {len(file_ids)}",
-                )
-                record = records.get(file_id)
-                future: Future[PreparedExtraction] | None = None
-                if record is not None:
-                    recorded_hash = str(record.get("hash") or "")
-                    seen_duplicate = bool(recorded_hash) and recorded_hash in seen_hashes
-                    if recorded_hash:
-                        seen_hashes.add(recorded_hash)
-                    if reuse_duplicates and not force and seen_duplicate:
-                        duplicate_candidates.add(file_id)
-                    if not (reuse_duplicates and not force and seen_duplicate):
-                        job = self._preparation_job(record, cache_keys, cache_signature)
-                        if job is not None:
-                            future = executor.submit(self._prepare_extraction, *job)
-                queue.append((file_id, future, index))
-                if len(queue) > EXTRACTION_PREFETCH:
+        try:
+            with ThreadPoolExecutor(max_workers=EXTRACTION_WORKERS) as executor:
+                for index, file_id in enumerate(file_ids, start=1):
+                    if cancel is not None:
+                        cancel.raise_if_cancelled()
+                    emit(
+                        progress,
+                        "analyse",
+                        index - 1,
+                        len(file_ids),
+                        f"Analysing {index} of {len(file_ids)}",
+                    )
+                    record = records.get(file_id)
+                    future: Future[PreparedExtraction] | None = None
+                    if record is not None:
+                        recorded_hash = str(record.get("hash") or "")
+                        seen_duplicate = bool(recorded_hash) and recorded_hash in seen_hashes
+                        if recorded_hash:
+                            seen_hashes.add(recorded_hash)
+                        if reuse_duplicates and not force and seen_duplicate:
+                            duplicate_candidates.add(file_id)
+                        if not (reuse_duplicates and not force and seen_duplicate):
+                            job = self._preparation_job(record, cache_keys, cache_signature)
+                            if job is not None:
+                                future = executor.submit(self._prepare_extraction, *job)
+                    queue.append((file_id, future, index))
+                    if len(queue) > EXTRACTION_PREFETCH:
+                        process(queue.popleft())
+                while queue:
+                    if cancel is not None:
+                        cancel.raise_if_cancelled()
                     process(queue.popleft())
-            while queue:
-                if cancel is not None:
-                    cancel.raise_if_cancelled()
-                process(queue.popleft())
+        except OperationCancelled:
+            self._files.restore_statuses(
+                {
+                    file_id: status
+                    for file_id, status in original_statuses.items()
+                    if file_id in claimed_ids and file_id not in started_ids
+                }
+            )
+            raise
 
         self._embeddings.prune_cache()
         report.duration_seconds = round(time.perf_counter() - started, 3)
@@ -947,18 +970,15 @@ class AnalysisService:
         result = self._llm.analyze_document(text, categories)
         if result is None:
             self._llm_failed_at = time.monotonic()
+            self._llm_state = None
             return False
         if not any(
             (
                 result.title,
-                result.document_type,
                 result.primary_category,
-                result.secondary_category,
                 result.organisation,
                 result.document_date,
                 result.confidence,
-                result.tags,
-                result.evidence,
             )
         ):
             profile.uncertainties.extend(result.uncertainties)
@@ -966,7 +986,6 @@ class AnalysisService:
 
         if result.title:
             profile.title = result.title
-            profile.title_supported = True
             profile.inferred_evidence.append("Title supplied by the local language model.")
         if result.organisation:
             profile.organisation = result.organisation

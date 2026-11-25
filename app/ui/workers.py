@@ -54,10 +54,7 @@ class Task(QRunnable):
             traceback.print_exc()
             self.signals.failed.emit(str(exc))
         else:
-            if self._token.cancelled:
-                self.signals.cancelled.emit()
-            else:
-                self.signals.finished.emit(result)
+            self.signals.finished.emit(result)
 
 
 __all__ = ["Task", "TaskFunction", "WorkerSignals"]

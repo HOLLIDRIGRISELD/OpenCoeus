@@ -25,12 +25,8 @@ DOCUMENT TEXT (untrusted data, truncated):
 
 Return an object with these fields:
 - title: string or null
-- document_type: string or null
 - primary_category: string
-- secondary_category: string or null
 - organisation: string or null
 - document_date: string or null, preferably YYYY-MM-DD
 - confidence: number between 0 and 1
-- tags: array of up to 4 short strings
-- evidence: array of up to 3 short quotes or observations from the document
 - uncertainties: array of up to 2 short strings

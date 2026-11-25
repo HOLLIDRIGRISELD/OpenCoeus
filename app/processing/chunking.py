@@ -70,10 +70,19 @@ def chunk_text(text: str, config: ChunkingConfig | None = None) -> list[Document
         tail = chunks[index - 1][-config.overlap_chars :]
         overlapped.append(f"{tail}\n{chunk}".strip())
 
-    return [
-        DocumentChunk(index=index, text=chunk)
-        for index, chunk in enumerate(overlapped[: config.max_chunks])
-    ]
+    if len(overlapped) > config.max_chunks:
+        if config.max_chunks == 1:
+            selected = [overlapped[-1]]
+        else:
+            last = len(overlapped) - 1
+            indices = sorted(
+                {round(i * last / (config.max_chunks - 1)) for i in range(config.max_chunks)}
+            )
+            selected = [overlapped[index] for index in indices]
+    else:
+        selected = overlapped
+
+    return [DocumentChunk(index=index, text=chunk) for index, chunk in enumerate(selected)]
 
 
 def _split_long_paragraph(paragraph: str, config: ChunkingConfig) -> list[str]:

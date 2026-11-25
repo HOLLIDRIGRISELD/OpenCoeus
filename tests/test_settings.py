@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from app.infrastructure.repositories.settings import SettingsRepository
 from app.services.context import AppContext
+from app.services.settings_service import SettingsService
 
 
 def test_settings_snapshot_contains_documented_defaults(context: AppContext) -> None:
@@ -64,6 +68,16 @@ def test_invalid_settings_reject_the_whole_update(context: AppContext) -> None:
 
     assert len(problems) >= 5
     assert context.settings.snapshot() == before
+
+
+def test_tiny_search_weight_survives_persistence(context: AppContext) -> None:
+    assert context.settings.update({"search.alpha": 0.00001, "search.beta": 0.0}) == []
+
+    stored = SettingsRepository(context.db).get("search.alpha")
+    assert stored is not None and float(stored) > 0
+
+    restarted = SettingsService(SettingsRepository(context.db), context.config)
+    assert restarted.search_alpha == pytest.approx(0.00001)
 
 
 def test_settings_reject_unparseable_booleans_and_weights(context: AppContext) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, literal, select
 from sqlalchemy.dialects.sqlite import insert
 
 from app.infrastructure.database import Database
@@ -82,19 +82,44 @@ class EmbeddingCacheRepository:
     def prune(self, max_entries: int = 10_000) -> int:
         limit = max(1, max_entries)
         with self._db.session() as session:
-            total = session.scalar(select(func.count()).select_from(EmbeddingCacheBlob)) or 0
-            if total <= limit:
-                return 0
-            cutoff = session.scalar(
-                select(EmbeddingCacheBlob.created_at)
-                .order_by(EmbeddingCacheBlob.created_at.desc())
-                .offset(limit)
-                .limit(1)
+            total = sum(
+                session.scalar(select(func.count()).select_from(table)) or 0
+                for table in (EmbeddingCacheBlob, EmbeddingCacheEntry)
             )
-            deleted = session.execute(
-                delete(EmbeddingCacheBlob).where(EmbeddingCacheBlob.created_at <= cutoff)
-            ).rowcount
-            legacy = session.execute(
-                delete(EmbeddingCacheEntry).where(EmbeddingCacheEntry.created_at <= cutoff)
-            ).rowcount
+            excess = total - limit
+            if excess <= 0:
+                return 0
+            oldest = (
+                select(
+                    EmbeddingCacheBlob.id.label("id"),
+                    EmbeddingCacheBlob.created_at.label("created_at"),
+                    literal("blob").label("source"),
+                )
+                .union_all(
+                    select(
+                        EmbeddingCacheEntry.id,
+                        EmbeddingCacheEntry.created_at,
+                        literal("legacy"),
+                    )
+                )
+                .order_by("created_at", "id")
+                .limit(excess)
+            )
+            rows = session.execute(oldest).all()
+            blob_ids = [row.id for row in rows if row.source == "blob"]
+            legacy_ids = [row.id for row in rows if row.source == "legacy"]
+            deleted = (
+                session.execute(
+                    delete(EmbeddingCacheBlob).where(EmbeddingCacheBlob.id.in_(blob_ids))
+                ).rowcount
+                if blob_ids
+                else 0
+            )
+            legacy = (
+                session.execute(
+                    delete(EmbeddingCacheEntry).where(EmbeddingCacheEntry.id.in_(legacy_ids))
+                ).rowcount
+                if legacy_ids
+                else 0
+            )
             return int(deleted or 0) + int(legacy or 0)

@@ -64,6 +64,17 @@ class OperationRepository:
             if status in {PlanStatus.COMPLETED, PlanStatus.PARTIALLY_COMPLETED, PlanStatus.FAILED}:
                 plan.completed_at = utcnow()
 
+    def reset_status(self, current: PlanStatus, target: PlanStatus) -> int:
+        """Move stale plans to a recoverable status at startup."""
+
+        with self._db.session() as session:
+            result = session.execute(
+                update(OrganisationPlan)
+                .where(OrganisationPlan.status == current.value)
+                .values(status=target.value)
+            )
+            return result.rowcount
+
     def claim_plan(
         self,
         plan_id: int,

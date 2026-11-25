@@ -15,8 +15,11 @@ import threading
 from pathlib import Path
 
 from app.core.config import AppConfig
-from app.core.constants import UNCLASSIFIED
+from app.core.constants import STATUS_ANALYSING, STATUS_PENDING_ANALYSIS, UNCLASSIFIED
+from app.core.exceptions import OperationConflictError
 from app.core.logging_config import configure_logging, get_logger
+from app.core.process_lock import DATA_LOCK_NAME, ProcessLock
+from app.domain.enums import PlanStatus
 from app.infrastructure.database import Database
 from app.infrastructure.repositories.analysis import AnalysisRepository
 from app.infrastructure.repositories.batches import BatchRepository, cleanup_stale_batches
@@ -74,14 +77,23 @@ class AppContext:
         self.config = config
         self.db = db or Database(config.db_url or f"sqlite:///{config.data_dir / 'opencoeus.db'}")
         self.db.create_schema()
-        # A staged batch is live state even before cleanup resolves its items.
-        staged = bool(BatchRepository(self.db).unfinished())
-        cleanup_stale_batches(self.db)
-
         self.files = FileRepository(self.db)
         self.analyses = AnalysisRepository(self.db)
         self.operations = OperationRepository(self.db)
         self.batches = BatchRepository(self.db)
+        # A staged batch is live state even before cleanup resolves its items.
+        try:
+            with ProcessLock(config.data_dir / DATA_LOCK_NAME).locked():
+                staged = bool(self.batches.unfinished())
+                cleanup_stale_batches(self.db)
+                self.operations.reset_status(
+                    PlanStatus.EXECUTING, PlanStatus.REVALIDATION_REQUIRED
+                )
+                self.files.reset_status(STATUS_ANALYSING, STATUS_PENDING_ANALYSIS)
+        except OperationConflictError:
+            logger.warning("Skipped batch cleanup; another process holds the data lock")
+            staged = True
+
         self.settings_repository = SettingsRepository(self.db)
         self.embedding_cache = EmbeddingCacheRepository(self.db)
         self.analysis_cache = AnalysisCacheRepository(self.db)

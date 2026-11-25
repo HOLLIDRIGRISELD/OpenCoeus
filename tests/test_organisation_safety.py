@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import os
 import types
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
-from app.core.exceptions import DatabaseError, InvalidRecommendationError
+if os.name == "nt":
+    import msvcrt
+else:  # pragma: no cover - POSIX test hosts
+    import fcntl
+
+from app.core.exceptions import (
+    DatabaseError,
+    InvalidRecommendationError,
+    OperationConflictError,
+)
 from app.domain.enums import PlanStatus
 from app.infrastructure.repositories.batches import cleanup_stale_batches
 from app.organisation.fsops import HashMismatchError, _rename_case_only
@@ -21,6 +31,58 @@ def _approved_plan(context, analysed_library) -> int:
     plan_id = context.organisation.create_plan()
     context.organisation.approve(plan_id)
     return plan_id
+
+
+@contextmanager
+def _held_data_lock(data_dir: Path):  # type: ignore[no-untyped-def]
+    path = data_dir / "organisation.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            try:
+                yield
+            finally:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:  # pragma: no cover - POSIX test hosts
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def test_data_lock_blocks_revalidate_and_restore_during_execution(
+    context, analysed_library
+) -> None:
+    plan_id = _approved_plan(context, analysed_library)
+    context.operations.update_plan_status(plan_id, PlanStatus.EXECUTING)
+    backup = context.recovery.backup()
+    live = context.config.db_path
+    before = live.read_bytes()
+
+    with _held_data_lock(context.config.data_dir):
+        with pytest.raises(OperationConflictError, match="(?i)another"):
+            context.organisation.revalidate(plan_id)
+        with pytest.raises(OperationConflictError, match="(?i)another"):
+            context.recovery.restore(backup)
+        assert live.read_bytes() == before
+
+    with pytest.raises(InvalidRecommendationError, match="(?i)executing"):
+        context.organisation.revalidate(plan_id)
+
+
+def test_undo_uses_the_cross_process_data_lock(context) -> None:
+    with (
+        _held_data_lock(context.config.data_dir),
+        pytest.raises(OperationConflictError, match="(?i)another"),
+    ):
+        context.recovery.undo(1)
 
 
 def test_mutating_operation_lookup_raises_for_missing_row(context) -> None:

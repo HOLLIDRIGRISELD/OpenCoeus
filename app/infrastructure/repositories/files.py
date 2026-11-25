@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.constants import (
     STATUS_ANALYSED,
+    STATUS_ANALYSING,
     STATUS_FAILED,
     STATUS_ORGANISED,
     STATUS_PENDING_REVIEW,
@@ -27,6 +29,8 @@ from app.infrastructure.models import (
     Tag,
 )
 from app.infrastructure.repositories._helpers import category_path_map
+
+SQLITE_BIND_CHUNK = 500
 
 
 class FileRepository:
@@ -47,57 +51,73 @@ class FileRepository:
 
         if not items:
             return []
-        paths = [str(scanned.path) for scanned, _ in items]
         now = utcnow()
         with self._db.session() as session:
-            existing = {
-                record.current_path: record
-                for record in session.scalars(select(File).where(File.current_path.in_(paths)))
-            }
-            results: list[tuple[int, bool]] = []
-            for scanned, status in items:
-                path_str = str(scanned.path)
-                record = existing.get(path_str)
-                created = record is None
-                if record is None:
-                    record = File(
-                        original_name=scanned.filename,
-                        current_name=scanned.filename,
-                        original_path=path_str,
-                        current_path=path_str,
-                        extension=scanned.extension,
-                        mime_type=scanned.mime_type,
-                        detected_format=scanned.detected_format,
-                        file_size=scanned.size,
-                        sha256_hash=scanned.sha256,
-                        created_at=scanned.created_at,
-                        modified_at=scanned.modified_at,
-                        last_scanned_at=now,
-                        processing_status=status,
-                        is_available=True,
+            result: list[tuple[int, bool]] = []
+            for start in range(0, len(items), SQLITE_BIND_CHUNK):
+                chunk = items[start : start + SQLITE_BIND_CHUNK]
+                paths = [str(scanned.path) for scanned, _ in chunk]
+                payload = {
+                    str(scanned.path): {
+                        "original_name": scanned.filename,
+                        "current_name": scanned.filename,
+                        "original_path": str(scanned.path),
+                        "current_path": str(scanned.path),
+                        "extension": scanned.extension,
+                        "mime_type": scanned.mime_type,
+                        "detected_format": scanned.detected_format,
+                        "file_size": scanned.size,
+                        "sha256_hash": scanned.sha256,
+                        "created_at": scanned.created_at,
+                        "modified_at": scanned.modified_at,
+                        "last_scanned_at": now,
+                        "processing_status": status,
+                        "is_available": True,
+                    }
+                    for scanned, status in chunk
+                }
+                existing_paths = set(
+                    session.scalars(
+                        select(File.current_path).where(File.current_path.in_(paths))
                     )
-                    session.add(record)
-                else:
-                    changed = (
-                        record.file_size != scanned.size
-                        or record.modified_at != scanned.modified_at
-                        or (scanned.sha256 is not None and record.sha256_hash != scanned.sha256)
-                    )
-                    record.file_size = scanned.size
-                    record.modified_at = scanned.modified_at
-                    record.extension = scanned.extension
-                    record.mime_type = scanned.mime_type or record.mime_type
-                    record.detected_format = scanned.detected_format or record.detected_format
-                    record.last_scanned_at = now
-                    record.is_available = True
-                    if scanned.sha256:
-                        record.sha256_hash = scanned.sha256
-                    if changed:
-                        record.processing_status = status
-                        record.last_analysed_at = None
-                results.append((record.id, created))
-            session.flush()
-        return results
+                )
+                created = {path: path not in existing_paths for path in paths}
+                statement = sqlite_insert(File).values(list(payload.values()))
+                excluded = statement.excluded
+                changed = or_(
+                    File.file_size.is_distinct_from(excluded.file_size),
+                    File.modified_at.is_distinct_from(excluded.modified_at),
+                    and_(
+                        excluded.sha256_hash.is_not(None),
+                        File.sha256_hash.is_distinct_from(excluded.sha256_hash),
+                    ),
+                )
+                written = session.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["current_path"],
+                        set_={
+                            "extension": excluded.extension,
+                            "mime_type": func.coalesce(excluded.mime_type, File.mime_type),
+                            "detected_format": func.coalesce(
+                                excluded.detected_format, File.detected_format
+                            ),
+                            "file_size": excluded.file_size,
+                            "sha256_hash": func.coalesce(excluded.sha256_hash, File.sha256_hash),
+                            "modified_at": excluded.modified_at,
+                            "last_scanned_at": now,
+                            "updated_record_at": now,
+                            "is_available": True,
+                            "processing_status": case(
+                                (changed, excluded.processing_status),
+                                else_=File.processing_status,
+                            ),
+                            "last_analysed_at": case((changed, None), else_=File.last_analysed_at),
+                        },
+                    ).returning(File.id, File.current_path)
+                ).all()
+                ids = {path: file_id for file_id, path in written}
+                result.extend((ids[path], created[path]) for path in paths)
+            return result
 
     def get_summary(self, file_id: int) -> FileSummary | None:
         with self._db.session() as session:
@@ -140,6 +160,88 @@ class FileRepository:
             records = session.scalars(stmt).all()
             analyses, paths, tags = self._summary_maps(session, records)
             return [self._to_summary(record, analyses, paths, tags) for record in records]
+
+    def count_summaries(
+        self,
+        *,
+        status: str | None = None,
+        extension: str | None = None,
+        text_filter: str | None = None,
+    ) -> int:
+        """Count file-table rows using the same filters as :meth:`list_summaries`."""
+
+        with self._db.session() as session:
+            stmt = select(func.count(File.id))
+            if status:
+                stmt = stmt.where(File.processing_status == status)
+            if extension:
+                stmt = stmt.where(File.extension == extension.lower())
+            if text_filter:
+                stmt = stmt.where(File.current_name.ilike(f"%{text_filter}%"))
+            return int(session.scalar(stmt) or 0)
+
+    def claim_ids(self, file_ids: Sequence[int], statuses: Sequence[str]) -> set[int]:
+        """Atomically claim the ids still in ``statuses`` for analysis."""
+
+        if not file_ids or not statuses:
+            return set()
+        claimed: set[int] = set()
+        with self._db.session() as session:
+            for start in range(0, len(file_ids), SQLITE_BIND_CHUNK):
+                chunk = list(file_ids[start : start + SQLITE_BIND_CHUNK])
+                rows = session.execute(
+                    update(File)
+                    .where(File.id.in_(chunk), File.processing_status.in_(statuses))
+                    .values(processing_status=STATUS_ANALYSING)
+                    .returning(File.id)
+                ).all()
+                claimed.update(row[0] for row in rows)
+        return claimed
+
+    def reset_status(self, current: str, target: str) -> int:
+        """Move stale rows from ``current`` back to a retryable status."""
+
+        with self._db.session() as session:
+            result = session.execute(
+                update(File)
+                .where(File.processing_status == current)
+                .values(processing_status=target)
+            )
+            return result.rowcount
+
+    def statuses_for_ids(self, file_ids: Sequence[int]) -> dict[int, str]:
+        """Snapshot statuses before a batch claim so cancellation can restore them."""
+
+        statuses: dict[int, str] = {}
+        with self._db.session() as session:
+            for start in range(0, len(file_ids), SQLITE_BIND_CHUNK):
+                chunk = list(file_ids[start : start + SQLITE_BIND_CHUNK])
+                rows = session.execute(
+                    select(File.id, File.processing_status).where(File.id.in_(chunk))
+                ).all()
+                statuses.update({file_id: status for file_id, status in rows})
+        return statuses
+
+    def restore_statuses(self, statuses: Mapping[int, str]) -> None:
+        """Restore snapshots to files that were claimed but never started."""
+
+        if not statuses:
+            return
+        by_status: dict[str, list[int]] = {}
+        for file_id, status in statuses.items():
+            by_status.setdefault(status, []).append(file_id)
+        with self._db.session() as session:
+            for status, ids in by_status.items():
+                for start in range(0, len(ids), SQLITE_BIND_CHUNK):
+                    chunk = ids[start : start + SQLITE_BIND_CHUNK]
+                    session.execute(
+                        update(File)
+                        .where(
+                            File.id.in_(chunk),
+                            File.processing_status == STATUS_ANALYSING,
+                        )
+                        .values(processing_status=status)
+                    )
 
     def _summary_maps(self, session, records: Sequence[File]) -> tuple[dict, dict, dict]:  # type: ignore[no-untyped-def]
         if not records:
@@ -422,6 +524,22 @@ class FileRepository:
             record = session.get(File, file_id)
             if record is None:
                 raise DatabaseError(f"File {file_id} does not exist.")
+            stale = session.scalar(
+                select(File).where(File.current_path == str(path), File.id != file_id)
+            )
+            if stale is not None:
+                base = f"{stale.current_path} [missing file #{stale.id}]"
+                candidate = base
+                suffix = 1
+                while session.scalar(
+                    select(File.id).where(File.current_path == candidate)
+                ) is not None:
+                    candidate = f"{base}-{suffix}"
+                    suffix += 1
+                stale.current_path = candidate
+                stale.is_available = False
+                stale.processing_status = STATUS_UNAVAILABLE
+                session.flush()
             record.current_path = str(path)
             record.current_name = path.name
 

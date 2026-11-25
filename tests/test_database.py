@@ -57,6 +57,53 @@ def test_database_seeds_categories_settings_and_integrity(tmp_path: Path) -> Non
     db.dispose()
 
 
+def test_create_schema_makes_current_path_unique_and_quarantines_legacy_duplicates(
+    tmp_path: Path,
+) -> None:
+    db = Database(f"sqlite:///{tmp_path / 'duplicates.db'}")
+    db.create_schema()
+
+    with db.engine.begin() as connection:
+        connection.execute(text("DROP INDEX IF EXISTS ux_files_current_path"))
+        for file_id in (7101, 7102):
+            connection.execute(
+                text(
+                    "INSERT INTO files (id, original_name, current_name, original_path, "
+                    "current_path, extension, file_size, processing_status, is_available, "
+                    "created_record_at, updated_record_at) "
+                    "VALUES (:id, 'legacy.txt', 'legacy.txt', '/legacy/legacy.txt', "
+                    "'/legacy/legacy.txt', '.txt', 10, 'analysed', 1, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {"id": file_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_analyses (file_id, classification_method, "
+                    "analysis_status, created_at) "
+                    "VALUES (:id, 'test', 'completed', CURRENT_TIMESTAMP)"
+                ),
+                {"id": file_id},
+            )
+
+    db.create_schema()
+
+    with db.engine.connect() as connection:
+        indexes = connection.execute(text("PRAGMA index_list('files')")).all()
+        kept = connection.execute(
+            text("SELECT id FROM files WHERE current_path = '/legacy/legacy.txt'")
+        ).scalars().all()
+        total = connection.execute(text("SELECT COUNT(*) FROM files")).scalar_one()
+        analyses = connection.execute(
+            text("SELECT COUNT(*) FROM document_analyses")
+        ).scalar_one()
+    assert any(name == "ux_files_current_path" and unique == 1 for _, name, unique, *_ in indexes)
+    assert list(kept) == [7101]
+    assert total == 2
+    assert analyses == 2
+    db.dispose()
+
+
 def test_fts_upsert_search_and_delete(tmp_path: Path) -> None:
     db = Database(f"sqlite:///{tmp_path / 'fts.db'}")
     db.create_schema()

@@ -86,23 +86,43 @@ def order_vacating_first(actions: list[PlannedAction]) -> list[PlannedAction]:
     for index, action in enumerate(actions):
         by_source.setdefault(path_key(action.source_path), []).append(index)
 
-    def prerequisites(index: int, visiting: frozenset[int]) -> set[int]:
-        if index in visiting:
-            return set()
-        destination = path_key(actions[index].destination_path)
+    prerequisites: dict[int, frozenset[int]] = {}
+    circular: set[int] = set()
+
+    def visit(index: int, stack: list[int]) -> frozenset[int]:
+        cached = prerequisites.get(index)
+        if cached is not None:
+            return cached
+        if index in stack:
+            circular.update(stack[stack.index(index) :])
+            return frozenset()
+        stack.append(index)
         result: set[int] = set()
-        for earlier in by_source.get(destination, []):
+        for earlier in by_source.get(path_key(actions[index].destination_path), []):
             if earlier == index:
                 continue
             result.add(earlier)
-            result |= prerequisites(earlier, visiting | {index})
-        return result
+            result.update(visit(earlier, stack))
+        stack.pop()
+        result.discard(index)
+        frozen = frozenset(result)
+        prerequisites[index] = frozen
+        return frozen
+
+    for index in range(len(actions)):
+        visit(index, [])
+
+    for index in circular:
+        if actions[index].conflict is None:
+            actions[index].conflict = (
+                "Circular rename chain: these actions depend on each other's source paths."
+            )
 
     def sort_key(item: tuple[int, PlannedAction]) -> tuple:
         index, action = item
         return (
             action.conflict is not None,
-            len(prerequisites(index, frozenset())),
+            len(prerequisites[index]),
             str(action.destination_path),
         )
 

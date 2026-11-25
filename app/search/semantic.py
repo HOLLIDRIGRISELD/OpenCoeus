@@ -36,12 +36,10 @@ class SemanticSearch:
         if cancel is not None:
             cancel.raise_if_cancelled()
         query_vector = self._embeddings.encode_one(query)
-        rows = self._analyses.load_embeddings(self._embeddings.model_name)
-        if not rows:
-            return []
-
         best: dict[int, tuple[float, str]] = {}
-        for file_id, vector, chunk_text in rows:
+        for file_id, vector, chunk_text in self._analyses.load_embeddings(
+            self._embeddings.model_name
+        ):
             if cancel is not None:
                 cancel.raise_if_cancelled()
             if vector.shape != query_vector.shape:

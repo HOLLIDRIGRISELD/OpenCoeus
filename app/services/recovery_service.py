@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.config import AppConfig
+from app.core.process_lock import DATA_LOCK_NAME, ProcessLock
 from app.domain.models import OperationResult, OperationView
 from app.infrastructure.database import Database
 from app.infrastructure.repositories.operations import OperationRepository
@@ -43,7 +44,8 @@ class RecoveryService:
         self._indexer = indexer
 
     def undo(self, operation_id: int) -> OperationResult:
-        return self._recovery.undo(operation_id)
+        with ProcessLock(self._config.data_dir / DATA_LOCK_NAME).locked():
+            return self._recovery.undo(operation_id)
 
     def undoable(self, limit: int = 100) -> list[OperationView]:
         return self._recovery.undoable(limit=limit)
@@ -85,7 +87,8 @@ class RecoveryService:
     def restore(self, backup_file: Path) -> None:
         """Replace the live database; the caller must restart the application."""
 
-        self._db.restore(Path(backup_file))
+        with ProcessLock(self._config.data_dir / DATA_LOCK_NAME).locked():
+            self._db.restore(Path(backup_file))
 
     def integrity_check(self) -> bool:
         return self._db.integrity_check()

@@ -63,6 +63,63 @@ def test_load_embeddings_returns_the_same_rows_as_stored_vectors(
         np.testing.assert_array_equal(vector, expected_vector)
 
 
+def test_semantic_search_reaches_chunks_beyond_scan_cap(context: AppContext) -> None:
+    model = context.embeddings.model_name
+    query = "zebrafish quantum ledger"
+    query_vector = context.embeddings.encode_one(query)
+    empty = np.zeros(query_vector.shape[0], dtype="<f8").tobytes()
+    match = np.asarray(query_vector, dtype="<f8").tobytes()
+    filler_id, target_id = 9001, 9002
+
+    with context.db.engine.begin() as connection:
+        for file_id, name in ((filler_id, "filler.txt"), (target_id, "target.txt")):
+            connection.execute(
+                text(
+                    "INSERT INTO files (id, original_name, current_name, original_path, "
+                    "current_path, extension, file_size, processing_status, is_available, "
+                    "created_record_at, updated_record_at) "
+                    "VALUES (:id, :name, :name, :path, :path, '.txt', 1, 'analysed', 1, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {"id": file_id, "name": name, "path": f"/library/{name}"},
+            )
+        chunks = [
+            (index, filler_id, index, f"filler {index}") for index in range(20_001)
+        ] + [(20_002, target_id, 0, query)]
+        connection.execute(
+            text(
+                "INSERT INTO document_chunks (id, file_id, chunk_index, text, token_estimate) "
+                "VALUES (:id, :file_id, :index, :text, 0)"
+            ),
+            [
+                {"id": chunk_id, "file_id": file_id, "index": index, "text": text}
+                for chunk_id, file_id, index, text in chunks
+            ],
+        )
+        connection.execute(
+            text(
+                "INSERT INTO embedding_blobs (file_id, chunk_id, model_name, dimension, vector, created_at) "
+                "VALUES (:file_id, :chunk_id, :model, :dimension, :vector, CURRENT_TIMESTAMP)"
+            ),
+            [
+                {
+                    "file_id": file_id,
+                    "chunk_id": chunk_id,
+                    "model": model,
+                    "dimension": query_vector.size,
+                    "vector": empty if file_id == filler_id else match,
+                }
+                for chunk_id, file_id, _, _ in chunks
+            ],
+        )
+
+    loaded = context.analyses.load_embeddings(model)
+    assert any(file_id == target_id for file_id, _, _ in loaded)
+
+    response = context.search.search(query, mode="semantic", limit=5)
+    assert target_id in [hit.file_id for hit in response.hits]
+
+
 def test_semantic_search_finds_related_content(context: AppContext, analysed_library: Path) -> None:
     invoice_id = file_id_for(context, analysed_library / "Downloads" / "invoice_acme_2024.txt")
 

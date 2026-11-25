@@ -27,17 +27,11 @@ from app.core.logging_config import get_logger
 logger = get_logger(__name__)
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
-_INJECTION_PATTERN = re.compile(
-    r"(?:\b(?:ignore|disregard|forget)\b[\s*_`~-]*"
-    r"(?:(?:all|any|the|your|these|those)\b[\s*_`~-]*)*"
-    r"(?:previous|prior|above|earlier|preceding|system)\b[\s*_`~-]*"
-    r"(?:instructions|directives|prompt)\b)"
-    r"|\b(?:you are now|your task is|system prompt|do not follow|pretend to be)\b"
-    r"|\b(?:respond|output|return)\s+(?:with\s+)?only\b"
-    r"|\b(?:please|kindly)\b[^.\n]{0,80}\b(?:in the title|in your (?:response|answer|output))\b"
-    r"|\byou must\b[^.\n]{0,80}\b(?:classify|categorise|categorize|label|mark|title|name|return|output|respond)\b",
-    re.IGNORECASE,
-)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl) -> None:
+        return None
 
 
 @lru_cache(maxsize=16)
@@ -50,14 +44,10 @@ class LocalLLMResult:
     """Validated structured output from a local language model."""
 
     title: str | None = None
-    document_type: str | None = None
     primary_category: str | None = None
-    secondary_category: str | None = None
     organisation: str | None = None
     document_date: str | None = None
     confidence: float | None = None
-    tags: list[str] = field(default_factory=list)
-    evidence: list[str] = field(default_factory=list)
     uncertainties: list[str] = field(default_factory=list)
     raw: dict[str, object] = field(default_factory=dict)
 
@@ -87,6 +77,7 @@ class LocalLLMClient:
         self.model = model
         self.timeout = timeout
         self.enabled = enabled
+        self._opener = urllib.request.build_opener(_NoRedirect)
 
     def _request(self, path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
         url = f"{self.base_url}{path}"
@@ -97,7 +88,7 @@ class LocalLLMClient:
             headers={"Content-Type": "application/json"},
             method="POST" if data else "GET",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310 - loopback URL validated in __init__
+        with self._opener.open(request, timeout=self.timeout) as response:
             body = response.read().decode("utf-8")
         parsed = json.loads(body)
         if not isinstance(parsed, dict):
@@ -130,13 +121,6 @@ class LocalLLMClient:
 
         if not self.enabled:
             return None
-        if _INJECTION_PATTERN.search(text):
-            logger.warning("Document contains instruction-like text; refusing LLM analysis.")
-            return LocalLLMResult(
-                uncertainties=[
-                    "Document contained instruction-like text; it was not sent to the language model."
-                ]
-            )
 
         prompt = self._render_prompt(
             "document_analysis.txt",
@@ -184,14 +168,10 @@ class LocalLLMClient:
 
         result = LocalLLMResult(
             title=self._string(data.get("title")),
-            document_type=self._string(data.get("document_type")),
             primary_category=category,
-            secondary_category=self._string(data.get("secondary_category")),
             organisation=self._string(data.get("organisation")),
             document_date=self._string(data.get("document_date")),
             confidence=confidence_value,
-            tags=self._string_list(data.get("tags"))[:4],
-            evidence=self._string_list(data.get("evidence"))[:3],
             uncertainties=self._string_list(data.get("uncertainties"))[:2],
             raw=data,
         )

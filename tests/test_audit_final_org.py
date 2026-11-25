@@ -9,7 +9,8 @@ from sqlalchemy import text
 from app.core.constants import SUGGESTION_ACCEPTED, SUGGESTION_APPLIED, SUGGESTION_REJECTED
 from app.domain.enums import ActionType, PlanStatus
 from app.domain.models import PlannedAction
-from app.organisation.planner import OrganisationPlanner, PlanEntry
+from app.organisation import planner as planner_module
+from app.organisation.planner import OrganisationPlanner, PlanEntry, order_vacating_first
 from app.services import organisation_service as org_service
 from tests.conftest import file_id_for
 from tests.test_organisation import _rename_plan
@@ -178,6 +179,59 @@ def test_planner_orders_three_step_rename_chain(tmp_path: Path) -> None:
     assert [action.file_id for action in draft.actions] == [3, 2, 1]
 
 
+def test_planner_marks_circular_rename_as_conflict(tmp_path: Path) -> None:
+    root = tmp_path / "library"
+    root.mkdir(parents=True, exist_ok=True)
+    first = root / "a.txt"
+    second = root / "b.txt"
+    first.write_text("alpha", encoding="utf-8")
+    second.write_text("beta", encoding="utf-8")
+
+    draft = OrganisationPlanner().plan(
+        root,
+        [
+            PlanEntry(1, first, "a.txt", "b.txt", Path("."), 0.9),
+            PlanEntry(2, second, "b.txt", "a.txt", Path("."), 0.9),
+        ],
+    )
+
+    assert len(draft.actions) == 2
+    assert all("circular" in (action.conflict or "").lower() for action in draft.actions)
+
+
+def test_order_vacating_first_computes_prerequisites_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "library"
+    root.mkdir(parents=True, exist_ok=True)
+    calls = {"path_key": 0}
+    real_path_key = planner_module.path_key
+
+    def counting_path_key(path: Path):  # type: ignore[no-untyped-def]
+        calls["path_key"] += 1
+        return real_path_key(path)
+
+    monkeypatch.setattr(planner_module, "path_key", counting_path_key)
+    size = 300
+    actions = [
+        PlannedAction(
+            file_id=index,
+            action=ActionType.RENAME,
+            source_path=root / f"{index}.txt",
+            destination_path=root / f"{index + 1}.txt",
+            original_name=f"{index}.txt",
+            new_name=f"{index + 1}.txt",
+            confidence=0.9,
+        )
+        for index in range(size)
+    ]
+
+    ordered = order_vacating_first(actions)
+
+    assert [action.file_id for action in ordered] == list(reversed(range(size)))
+    assert calls["path_key"] <= 2 * size + 10
+
+
 def test_revalidate_keeps_rename_chain_without_false_conflicts(context, tmp_path: Path) -> None:
     root = tmp_path / "library"
     root.mkdir(parents=True, exist_ok=True)
@@ -211,7 +265,7 @@ def test_revalidate_keeps_rename_chain_without_false_conflicts(context, tmp_path
     ]
     plan_id = context.operations.create_plan(root, actions)
     context.organisation.approve(plan_id)
-    context.operations.update_plan_status(plan_id, PlanStatus.EXECUTING)
+    context.operations.update_plan_status(plan_id, PlanStatus.REVALIDATION_REQUIRED)
 
     context.organisation.revalidate(plan_id)
 
@@ -246,6 +300,18 @@ def test_execute_recomputes_conflict_after_planning(context, tmp_path: Path) -> 
     assert len(report.completed) == 1
     assert blocker.read_text(encoding="utf-8") == "alpha content"
     assert all(row.conflict is None for row in context.organisation.items(plan_id))
+    with context.db.engine.connect() as connection:
+        stale = connection.execute(
+            text(
+                "SELECT current_path, is_available, processing_status FROM files "
+                "WHERE original_path = :path AND id != :id"
+            ),
+            {"path": str(blocker), "id": file_id},
+        ).all()
+    assert len(stale) == 1
+    assert "missing file" in stale[0][0]
+    assert stale[0][1] == 0
+    assert stale[0][2] == "unavailable"
 
 
 def test_undo_resets_applied_suggestions_to_accepted(context, analysed_library) -> None:

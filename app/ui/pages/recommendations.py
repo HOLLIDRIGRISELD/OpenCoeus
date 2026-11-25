@@ -41,6 +41,8 @@ from app.ui.widgets import (
     set_cell,
 )
 
+PAGE_SIZE = 500
+
 
 class RecommendationsPage(BasePage):
     """Review one suggestion at a time, with evidence and manual overrides."""
@@ -57,6 +59,8 @@ class RecommendationsPage(BasePage):
         self._suggestions: dict[int, object] = {}
         self._duplicates_loaded = False
         self._last_detail_id: int | None = -1
+        self._partial_suggestions = False
+        self._total_suggestions = 0
         self._build()
         self.refresh()
 
@@ -243,13 +247,18 @@ class RecommendationsPage(BasePage):
     def _refresh_suggestions(self) -> None:
         previous_id = self._current_id
         try:
-            suggestions = self.ctx.recommendations.pending(limit=500)
+            suggestions = self.ctx.recommendations.pending(limit=PAGE_SIZE + 1)
+            total = self.ctx.recommendations.pending_count()
+            suggestions = suggestions[:PAGE_SIZE]
         except Exception as exc:
             self.message.emit(f"Could not load recommendations: {exc}")
             self._suggestions.clear()
             self._current_id = None
             self.suggestion_table.setRowCount(0)
             self.suggestion_count.setText("Suggestions could not be loaded.")
+            self._partial_suggestions = False
+            self._total_suggestions = 0
+            self.accept_all_button.setText("Accept all")
             self.accept_all_button.setEnabled(False)
             self._clear_form()
             self.empty_state.setVisible(True)
@@ -271,11 +280,20 @@ class RecommendationsPage(BasePage):
             )
             set_cell(self.suggestion_table, row, 4, suggestion.status.replace("_", " "))
 
-        self.suggestion_count.setText(
-            f"{len(suggestions)} suggestion(s) awaiting a decision."
-            if suggestions
-            else "Nothing to review. Scan and analyse a folder to generate suggestions."
-        )
+        self._partial_suggestions = total > len(suggestions)
+        self._total_suggestions = total
+        if self._partial_suggestions:
+            self.suggestion_count.setText(
+                f"Showing first {len(suggestions)} of {total} suggestion(s) awaiting a decision."
+            )
+            self.accept_all_button.setText("Accept loaded (partial)")
+        else:
+            self.suggestion_count.setText(
+                f"{len(suggestions)} suggestion(s) awaiting a decision."
+                if suggestions
+                else "Nothing to review. Scan and analyse a folder to generate suggestions."
+            )
+            self.accept_all_button.setText("Accept all")
         self.accept_all_button.setEnabled(bool(suggestions))
 
         if previous_id is not None and previous_id in self._suggestions:
@@ -602,11 +620,21 @@ class RecommendationsPage(BasePage):
         suggestions = list(self._suggestions.values()) if hasattr(self, "_suggestions") else []
         if not suggestions:
             return
+        if self._partial_suggestions:
+            prompt = (
+                f"Accept only the {len(suggestions)} loaded suggestions "
+                f"(first {len(suggestions)} of {self._total_suggestions}); the rest stay pending. "
+                "You will still approve the plan before any file is moved."
+            )
+        else:
+            prompt = (
+                f"Accept all {len(suggestions)} suggestions? You will still approve the plan "
+                "before any file is moved."
+            )
         accepted = QMessageBox.question(
             self,
             "Accept all recommendations",
-            f"Accept all {len(suggestions)} suggestions? You will still approve the plan "
-            "before any file is moved.",
+            prompt,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -619,7 +647,8 @@ class RecommendationsPage(BasePage):
         except Exception as exc:
             self.message.emit(f"Could not accept the recommendations: {exc}")
             return
-        self.message.emit(f"{count} recommendation(s) accepted for planning.")
+        suffix = " (partial: only loaded suggestions)" if self._partial_suggestions else ""
+        self.message.emit(f"{count} recommendation(s) accepted for planning{suffix}.")
         self.refresh()
         self.library_changed.emit()
 

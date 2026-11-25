@@ -48,6 +48,7 @@ STATUS_CHOICES = [
     "unavailable",
 ]
 SORT_CHOICES = {"Newest first": "modified", "Name": "name", "Largest first": "size"}
+PAGE_SIZE = 1000
 
 
 class FilesPage(BasePage):
@@ -173,13 +174,17 @@ class FilesPage(BasePage):
             )
 
         status = self.status_combo.currentText()
+        filters = {
+            "status": None if status == "All statuses" else status,
+            "text_filter": self.search_edit.text().strip() or None,
+            "order_by": SORT_CHOICES.get(self.sort_combo.currentText(), "modified"),
+        }
         try:
-            summaries = self.ctx.files.list_summaries(
-                limit=1000,
-                status=None if status == "All statuses" else status,
-                text_filter=self.search_edit.text().strip() or None,
-                order_by=SORT_CHOICES.get(self.sort_combo.currentText(), "modified"),
+            summaries = self.ctx.files.list_summaries(limit=PAGE_SIZE + 1, **filters)
+            total = self.ctx.files.count_summaries(
+                **{key: value for key, value in filters.items() if key != "order_by"}
             )
+            summaries = summaries[:PAGE_SIZE]
         except Exception as exc:
             self.message.emit(f"Could not load files: {exc}")
             self._summaries.clear()
@@ -208,11 +213,16 @@ class FilesPage(BasePage):
             set_cell(self.table, row, 3, format_size(summary.size))
             set_cell(self.table, row, 4, format_datetime(summary.modified_at))
 
-        self.count_label.setText(
-            f"{len(summaries)} file(s) shown."
-            if summaries
-            else "No files match the current filters."
-        )
+        if total > len(summaries):
+            self.count_label.setText(
+                f"Showing first {len(summaries)} of {total} file(s); the rest are not loaded."
+            )
+        else:
+            self.count_label.setText(
+                f"{len(summaries)} file(s) shown."
+                if summaries
+                else "No files match the current filters."
+            )
         if previous_id is not None and previous_id in self._summaries:
             self._select_row(previous_id)
         elif summaries:

@@ -46,6 +46,10 @@ ROOT_CATEGORY_INDEX = (
     "ON categories(name) WHERE parent_id IS NULL"
 )
 
+UNIQUE_FILE_PATH_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_files_current_path ON files(current_path)"
+)
+
 PERFORMANCE_INDEXES = (
     "CREATE INDEX IF NOT EXISTS ix_da_file_id_id "
     "ON document_analyses(file_id, id DESC)",
@@ -161,6 +165,8 @@ class Database:
                     connection.exec_driver_sql("BEGIN IMMEDIATE")
                     try:
                         Base.metadata.create_all(connection)
+                        self._quarantine_duplicate_paths(connection)
+                        connection.execute(text(UNIQUE_FILE_PATH_INDEX))
                         connection.execute(text(FTS_SCHEMA))
                         connection.execute(text(ROOT_CATEGORY_INDEX))
                         for statement in PERFORMANCE_INDEXES:
@@ -172,6 +178,33 @@ class Database:
                         raise
             except Exception as exc:  # pragma: no cover - defensive
                 raise DatabaseError(f"Could not initialise database: {exc}") from exc
+
+    @staticmethod
+    def _quarantine_duplicate_paths(connection: Connection) -> None:
+        """Keep legacy duplicate file rows reachable under distinct, unavailable paths."""
+
+        losers = connection.execute(
+            text(
+                "SELECT id, current_path FROM files "
+                "WHERE current_path IN ("
+                "  SELECT current_path FROM files GROUP BY current_path HAVING COUNT(*) > 1"
+                ") AND id NOT IN ("
+                "  SELECT MIN(id) FROM files GROUP BY current_path HAVING COUNT(*) > 1"
+                ")"
+            )
+        ).all()
+        exists = text("SELECT 1 FROM files WHERE current_path = :candidate")
+        update = text(
+            "UPDATE files SET current_path = :candidate, is_available = 0, "
+            "processing_status = 'unavailable' WHERE id = :id"
+        )
+        for file_id, path in losers:
+            candidate = f"{path} [duplicate file #{file_id}]"
+            suffix = 1
+            while connection.scalar(exists, {"candidate": candidate}) is not None:
+                candidate = f"{path} [duplicate file #{file_id}-{suffix}]"
+                suffix += 1
+            connection.execute(update, {"candidate": candidate, "id": file_id})
 
     def purge_session_data(self) -> int:
         """Forget the previous session; keep settings, categories and rules.

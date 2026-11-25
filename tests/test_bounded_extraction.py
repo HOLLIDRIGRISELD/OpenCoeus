@@ -75,6 +75,19 @@ def test_image_extractor_truncates_oversized_exif_text(tmp_path: Path, monkeypat
     assert any("truncated" in warning for warning in result.warnings)
 
 
+def test_text_extractor_decodes_utf16_with_bom(tmp_path: Path) -> None:
+    path = tmp_path / "utf16.txt"
+    path.write_bytes("UTF-16 invoice\nAmount: €100\n".encode("utf-16"))
+
+    result = TextExtractor().extract(path)
+
+    assert result.success is True
+    assert "invoice" in result.text
+    assert "€100" in result.text
+    assert result.meta["encoding"] == "utf-16"
+    assert result.warnings == []
+
+
 def test_text_extractor_preserves_multibyte_boundaries(tmp_path: Path) -> None:
     path = tmp_path / "unicode.txt"
     path.write_text("€" * 100, encoding="utf-8")

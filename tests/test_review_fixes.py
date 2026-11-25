@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 from sqlalchemy import text
 
+from app.core.constants import STATUS_ANALYSING, STATUS_PENDING_ANALYSIS
 from app.core.exceptions import DatabaseError
+from app.domain.enums import PlanStatus
+from app.domain.models import ScannedFile
 from app.processing.extractors.text import TextExtractor
+from app.search.semantic import SemanticSearch
 from app.services.context import AppContext
 from tests.conftest import write_text
 
@@ -114,3 +119,88 @@ def test_recovery_vacuum_delegates_to_database(context: AppContext, monkeypatch)
     context.recovery.vacuum()
 
     assert calls == [1]
+
+
+def test_count_helpers_match_filtered_pages(context: AppContext, tmp_path: Path) -> None:
+    root = tmp_path / "library"
+    _analyse(context, root, ["one.txt", "two.txt"])
+
+    assert context.files.count_summaries(status="analysed") == len(
+        context.files.list_summaries(limit=10**9, status="analysed")
+    )
+    assert context.files.count_summaries(text_filter="one") == len(
+        context.files.list_summaries(limit=10**9, text_filter="one")
+    )
+    assert context.recommendations.pending_count() == len(
+        context.recommendations.pending(limit=10**9)
+    )
+
+
+def test_upsert_many_splits_large_scan_batches(context: AppContext) -> None:
+    now = datetime.now(UTC)
+    items = [
+        ScannedFile(
+            path=Path(f"/virtual/doc-{index}.txt"),
+            relative_path=Path(f"doc-{index}.txt"),
+            filename=f"doc-{index}.txt",
+            extension=".txt",
+            size=1,
+            modified_at=now,
+            created_at=now,
+        )
+        for index in range(600)
+    ]
+
+    batch = [(scanned, "discovered") for scanned in items]
+    created = context.files.upsert_many(batch)
+
+    assert len(created) == 600
+    assert all(is_new for _, is_new in created)
+    assert context.files.count_summaries() == 600
+    assert all(not is_new for _, is_new in context.files.upsert_many(batch))
+
+
+def test_startup_resets_interrupted_plans_and_files(context: AppContext, tmp_path: Path) -> None:
+    root = tmp_path / "library"
+    path = write_text(root / "one.txt", "INVOICE\n")
+    context.scanning.scan(root)
+    file_id = context.files.find_by_path(path)
+    assert file_id is not None
+    context.files.update_status(file_id, STATUS_ANALYSING)
+    plan_id = context.operations.create_plan(root, [])
+    context.operations.update_plan_status(plan_id, PlanStatus.EXECUTING)
+
+    restarted = AppContext(context.config, purge=False)
+    try:
+        plan = restarted.operations.get_plan(plan_id)
+        summary = restarted.files.get_summary(file_id)
+        assert plan is not None
+        assert plan["status"] == PlanStatus.REVALIDATION_REQUIRED.value
+        assert summary is not None
+        assert summary.status == STATUS_PENDING_ANALYSIS
+    finally:
+        restarted.close()
+
+
+def test_semantic_search_loads_embeddings_before_scoring(
+    context: AppContext, monkeypatch
+) -> None:
+    class FakeAnalyses:
+        def iter_embeddings(self, model: str):  # type: ignore[no-untyped-def]
+            raise AssertionError("streaming embeddings would hold the database lock")
+
+        def load_embeddings(self, model: str):  # type: ignore[no-untyped-def]
+            return [(1, np.ones(4), "invoice payment")]
+
+    class FakeEmbeddings:
+        model_name = "fake"
+
+        def encode_one(self, query: str):  # type: ignore[no-untyped-def]
+            return np.ones(4)
+
+    search = SemanticSearch(FakeAnalyses(), FakeEmbeddings())  # type: ignore[arg-type]
+    monkeypatch.setattr(search, "_paths", lambda file_ids: {1: ("one.txt", "one.txt")})
+
+    hits = search.search("payment")
+
+    assert [hit.file_id for hit in hits] == [1]

@@ -196,6 +196,24 @@ def test_task_cancel_does_not_block_while_worker_runs(qt_app) -> None:
     assert elapsed < 0.2
 
 
+def test_task_reports_finished_when_cancelled_after_work_returns(qt_app) -> None:
+    from app.ui.workers import Task
+
+    outcomes: list[tuple] = []
+
+    def work(_progress, token):
+        token.cancel(wait=False)
+        return "done"
+
+    task = Task(work)
+    task.signals.finished.connect(lambda result: outcomes.append(("finished", result)))
+    task.signals.cancelled.connect(lambda: outcomes.append(("cancelled",)))
+
+    task.run()
+
+    assert outcomes == [("finished", "done")]
+
+
 def test_semantic_search_stops_when_token_is_cancelled() -> None:
     from app.core.progress import CancellationToken, OperationCancelled
     from app.search.semantic import SemanticSearch
@@ -211,6 +229,9 @@ def test_semantic_search_stops_when_token_is_cancelled() -> None:
             yield file_id, np.ones(4), f"chunk {file_id}"
 
     class FakeAnalyses:
+        def iter_embeddings(self, model: str):
+            return rows()
+
         def load_embeddings(self, model: str):
             return rows()
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -596,5 +597,98 @@ def test_recommendation_field_labels_use_field_role(qt_app, context) -> None:
         ]
         assert labels
         assert all(label.property("role") == "field" for label in labels)
+    finally:
+        page.deleteLater()
+
+
+def test_files_page_reports_rows_hidden_by_the_load_window(qt_app, context, monkeypatch) -> None:
+    from app.ui.pages.files import FilesPage
+
+    stamp = datetime.now(UTC)
+    rows = [
+        type(
+            "Summary",
+            (),
+            {
+                "id": file_id,
+                "name": f"file{file_id}.txt",
+                "path": f"file{file_id}.txt",
+                "category": None,
+                "status": "analysed",
+                "size": 3,
+                "modified_at": stamp,
+                "tags": (),
+                "title": None,
+            },
+        )()
+        for file_id in range(1, 1002)
+    ]
+    monkeypatch.setattr(
+        context.files,
+        "list_summaries",
+        lambda *args, limit=500, **kwargs: rows[:limit],
+    )
+    monkeypatch.setattr(context.files, "count_summaries", lambda **kwargs: len(rows))
+
+    page = FilesPage(context)
+    try:
+        assert "showing first 1000 of 1001" in page.count_label.text().lower()
+    finally:
+        page.deleteLater()
+
+
+def test_recommendations_page_marks_accept_all_as_partial(qt_app, context, monkeypatch) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    from app.ui.pages.recommendations import RecommendationsPage
+
+    rows = [
+        type(
+            "Suggestion",
+            (),
+            {
+                "file_id": file_id,
+                "filename": f"file{file_id}.txt",
+                "suggested_value": f"new{file_id}.txt",
+                "category": None,
+                "confidence": 0.9,
+                "status": "pending",
+            },
+        )()
+        for file_id in range(1, 502)
+    ]
+    questions: list[str] = []
+    accepted: list[list[int]] = []
+    monkeypatch.setattr(
+        context.recommendations,
+        "pending",
+        lambda *args, limit=500, **kwargs: rows[:limit],
+    )
+    monkeypatch.setattr(context.recommendations, "pending_count", lambda: len(rows))
+    monkeypatch.setattr(context.recommendations, "detail", lambda file_id: None)
+    monkeypatch.setattr(
+        context.recommendations,
+        "accept_many",
+        lambda file_ids: accepted.append(list(file_ids)) or len(file_ids),
+    )
+
+    def question(*args, **kwargs):
+        questions.append(str(args[2]))
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+
+    page = RecommendationsPage(context)
+    messages: list[str] = []
+    page.message.connect(messages.append)
+    try:
+        assert "showing first 500 of 501" in page.suggestion_count.text().lower()
+        assert "partial" in page.accept_all_button.text().lower()
+
+        page._accept_all()
+
+        assert accepted == [list(range(1, 501))]
+        assert any("first 500" in text and "501" in text for text in questions)
+        assert any("partial" in message.lower() for message in messages)
     finally:
         page.deleteLater()

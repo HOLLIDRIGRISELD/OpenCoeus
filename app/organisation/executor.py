@@ -327,7 +327,9 @@ class FileOperationExecutor:
             )
         except Exception as exc:
             logger.exception("Operation %s failed: %s", operation_id, exc)
-            restored = self._recover_after_failure(actual_source, destination)
+            restored = self._recover_after_failure(
+                actual_source, destination, original_hash, operation_id
+            )
             if restored:
                 try:
                     self._files.update_location(action.file_id, actual_source)
@@ -366,14 +368,29 @@ class FileOperationExecutor:
         )
         return [parent]
 
-    @staticmethod
-    def _recover_after_failure(source: Path, destination: Path) -> bool:
+    def _recover_after_failure(
+        self, source: Path, destination: Path, expected_hash: str | None, operation_id: int
+    ) -> bool:
         """Best effort: put the file back if it was already moved."""
 
         if source.exists():
             return True
         if not destination.exists():
             return True
+        if expected_hash:
+            try:
+                current_hash = sha256_file(destination)
+            except OSError as exc:
+                logger.error("Cannot verify %s before rollback: %s", destination, exc)
+                return False
+            if current_hash != expected_hash:
+                detail = (
+                    f"Content hash of {destination} changed; "
+                    f"left it there instead of restoring {source}"
+                )
+                logger.error("Rollback refused: %s", detail)
+                self._operations.add_event(operation_id, "rollback_failed", detail)
+                return False
         try:
             move_no_overwrite(destination, source)
         except Exception:  # pragma: no cover - last-resort path

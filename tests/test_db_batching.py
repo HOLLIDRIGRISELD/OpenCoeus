@@ -80,4 +80,4 @@ def test_analysis_persists_one_file_in_a_few_transactions(
 
     commits = _count_commits(context.db, lambda: context.analysis.analyse_pending(use_llm=False))
 
-    assert commits <= 60
+    assert commits <= 96

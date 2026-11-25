@@ -133,6 +133,25 @@ def test_duplicate_lookup_is_grouped_and_skips_empty_hashes(
     assert all(grouped_calls[0].values())
 
 
+def test_second_claim_of_the_same_file_is_skipped(
+    context: AppContext, tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "library"
+    write_text(root / "invoice.txt", "INVOICE\nAmount due: 10.00\n")
+    context.scanning.scan(root)
+    file_id = context.files.find_by_path(root / "invoice.txt")
+    assert file_id is not None
+    monkeypatch.setattr(
+        context.files, "ids_by_status", lambda statuses, limit=None: [file_id]
+    )
+
+    first = context.analysis.analyse_pending(use_llm=False)
+    second = context.analysis.analyse_pending(use_llm=False)
+
+    assert first.analysed == 1
+    assert second.analysed == 0
+
+
 def test_prompt_templates_are_cached(context: AppContext) -> None:
     from app.intelligence import llm as llm_module
 

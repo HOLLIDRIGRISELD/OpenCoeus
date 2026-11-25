@@ -254,7 +254,7 @@ class SettingsService:
         if isinstance(value, bool):
             return "true" if value else "false"
         if isinstance(value, float):
-            return f"{value:.4f}".rstrip("0").rstrip(".")
+            return repr(value)
         return str(value)
 
     def _apply_to_config(self, values: Mapping[str, Any]) -> None:

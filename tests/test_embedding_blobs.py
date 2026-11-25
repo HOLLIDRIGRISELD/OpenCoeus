@@ -136,6 +136,91 @@ def test_embedding_cache_prune_keeps_newest(context: AppContext) -> None:
     assert set(remaining) == {"hash-3", "hash-4"}
 
 
+def test_cache_prune_breaks_timestamp_ties_by_id(context: AppContext) -> None:
+    model = context.embeddings.model_name
+    vectors = {
+        f"hash-{index}": np.full(8, index, dtype=np.float64) for index in range(5)
+    }
+    context.embedding_cache.set_many(model, vectors)
+
+    with context.db.engine.begin() as connection:
+        for index in range(5):
+            connection.execute(
+                text(
+                    "UPDATE embedding_cache_blobs SET created_at = '2026-01-01 00:00:00' "
+                    "WHERE text_hash = :text_hash"
+                ),
+                {"text_hash": f"hash-{index}"},
+            )
+
+    assert context.embedding_cache.prune(max_entries=2) == 3
+    remaining = context.embedding_cache.get_many(model, list(vectors))
+    assert set(remaining) == {"hash-3", "hash-4"}
+
+
+def test_cache_prune_counts_legacy_rows_when_no_blobs_exist(context: AppContext) -> None:
+    model = context.embeddings.model_name
+    with context.db.engine.begin() as connection:
+        for index in range(4):
+            connection.execute(
+                text(
+                    "INSERT INTO embedding_cache "
+                    "(model_name, text_hash, dimension, vector, created_at) "
+                    "VALUES (:model, :hash, 2, :vector, :stamp)"
+                ),
+                {
+                    "model": model,
+                    "hash": f"legacy-{index}",
+                    "vector": json.dumps([index, index + 1]),
+                    "stamp": f"2025-01-01 00:00:0{index}",
+                },
+            )
+
+    assert context.embedding_cache.prune(max_entries=1) == 3
+    with context.db.engine.connect() as connection:
+        remaining = connection.execute(text("SELECT text_hash FROM embedding_cache")).scalars().all()
+    assert list(remaining) == ["legacy-3"]
+
+
+def test_cache_prune_counts_both_tables_without_over_deleting(context: AppContext) -> None:
+    model = context.embeddings.model_name
+    with context.db.engine.begin() as connection:
+        for index in range(3):
+            connection.execute(
+                text(
+                    "INSERT INTO embedding_cache_blobs "
+                    "(model_name, text_hash, dimension, vector, created_at) "
+                    "VALUES (:model, :hash, 2, :vector, :stamp)"
+                ),
+                {
+                    "model": model,
+                    "hash": f"blob-{index}",
+                    "vector": json.dumps([index, index + 1]),
+                    "stamp": f"2026-01-01 00:00:0{index}",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO embedding_cache "
+                    "(model_name, text_hash, dimension, vector, created_at) "
+                    "VALUES (:model, :hash, 2, :vector, :stamp)"
+                ),
+                {
+                    "model": model,
+                    "hash": f"legacy-{index}",
+                    "vector": json.dumps([index, index + 1]),
+                    "stamp": f"2026-01-02 00:00:0{index}",
+                },
+            )
+
+    assert context.embedding_cache.prune(max_entries=3) == 3
+    with context.db.engine.connect() as connection:
+        blobs = connection.execute(text("SELECT text_hash FROM embedding_cache_blobs")).scalars().all()
+        legacy = connection.execute(text("SELECT text_hash FROM embedding_cache")).scalars().all()
+    assert blobs == []
+    assert legacy == ["legacy-0", "legacy-1", "legacy-2"]
+
+
 def test_analysis_triggers_cache_prune(
     context: AppContext, monkeypatch, tmp_path
 ) -> None:
